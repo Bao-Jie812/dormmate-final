@@ -1,0 +1,21 @@
+<view class="container">
+  <view class="title">DormMate</view>
+  <view class="subtitle">宿舍环境助手·移动端 </view>
+
+  <view class="input-group">
+    <text>温度（℃）</text>
+    <input type="digit" placeholder="例如 31" bindinput="onTempInput" value="{{temperature}}" />
+  </view>
+
+  <view class="input-group">
+    <text>湿度（%）</text>
+    <input type="digit" placeholder="例如 78" bindinput="onHumidityInput" value="{{humidity}}" />
+  </view>
+
+  <button class="analyze-btn" bindtap="analyze">分析环境</button>
+
+  <view class="result">
+    <text>当前状态：{{status}}</text>
+    <text>建议：{{advice}}</text>
+  </view>
+</view>

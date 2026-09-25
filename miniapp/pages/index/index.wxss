@@ -1,0 +1,53 @@
+.container {
+  padding: 40rpx;
+  display: flex;
+  flex-direction: column;
+}
+
+.title {
+  font-size: 48rpx;
+  font-weight: bold;
+  color: #2563eb;
+  margin-bottom: 20rpx;
+}
+
+.subtitle {
+  color: #6b7280;
+  margin-bottom: 40rpx;
+}
+
+.input-group {
+  margin-bottom: 30rpx;
+  display: flex;
+  flex-direction: column;
+}
+
+.input-group text {
+  margin-bottom: 10rpx;
+  font-weight: bold;
+}
+
+.input-group input {
+  border: 1px solid #cbd5e1;
+  border-radius: 10rpx;
+  padding: 20rpx;
+}
+
+.analyze-btn {
+  background-color: #2563eb;
+  color: white;
+  border-radius: 10rpx;
+  margin-bottom: 40rpx;
+}
+
+.result {
+  background-color: #f8fafc;
+  padding: 30rpx;
+  border-radius: 14rpx;
+  display: flex;
+  flex-direction: column;
+}
+
+.result text {
+  margin-bottom: 16rpx;
+}
