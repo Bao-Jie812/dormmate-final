@@ -102,3 +102,46 @@ h1 {
   color: #dc2626;
   font-weight: 700;
 }
+
+#exportBtn {
+  padding: 10px 24px;
+  border: none;
+  border-radius: 8px;
+  background: #475569;  /* 深石板灰 */
+  color: #ffffff;       /* 文字改成纯白，对比更清晰 */
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+#exportBtn:hover {
+  background: #334155;  /* 悬停时更深一点 */
+}
+
+.camera-area,
+.voice-area {
+  margin-top: 24px;
+  padding: 18px;
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+#cameraBtn,
+#asrBtn,
+#ttsBtn {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 8px;
+  background: #475569;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+  margin-right: 8px;
+}
+
+#cameraBtn:hover,
+#asrBtn:hover,
+#ttsBtn:hover {
+  background: #334155;
+}

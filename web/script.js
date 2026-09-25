@@ -1,9 +1,17 @@
+const asrBtn = document.getElementById('asrBtn');
+const ttsBtn = document.getElementById('ttsBtn');
+const asrResult = document.getElementById('asrResult');
+const cameraBtn = document.getElementById('cameraBtn');
+const cameraPreview = document.getElementById('cameraPreview');
+const cameraCanvas = document.getElementById('cameraCanvas');
+const snapshotImg = document.getElementById('snapshotImg');
 const temperatureInput = document.getElementById('temperatureInput');
 const humidityInput = document.getElementById('humidityInput');
 const analyzeBtn = document.getElementById('analyzeBtn');
 const statusText = document.getElementById('statusText');
 const adviceText = document.getElementById('adviceText');
 const historyList = document.getElementById('historyList');
+const exportBtn = document.getElementById('exportBtn');
 
 const historyRecords = [];
 
@@ -117,3 +125,88 @@ analyzeBtn.addEventListener('click', () => {
 
   renderHistory();
 });
+
+exportBtn.addEventListener('click', () => {
+  if (historyRecords.length === 0) {
+    alert('暂无历史记录，请先分析环境。');
+    return;
+  }
+
+  const headers = ['time', 'temperature', 'humidity', 'status'];
+  const rows = historyRecords.map(record => 
+    `${record.time},${record.temperature},${record.humidity},${record.status}`
+  );
+
+  const csvContent = '\uFEFF' + [headers.join(','), ...rows].join('\n');
+
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'dormmate.csv';
+  link.click();
+  URL.revokeObjectURL(url);
+});
+
+cameraBtn.addEventListener('click', async () => {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    cameraPreview.srcObject = stream;
+    cameraPreview.style.display = 'block';
+
+    // 等视频加载后再截图
+    cameraPreview.onloadedmetadata = () => {
+      cameraCanvas.width = cameraPreview.videoWidth;
+      cameraCanvas.height = cameraPreview.videoHeight;
+      cameraCanvas.getContext('2d').drawImage(cameraPreview, 0, 0);
+      const dataUrl = cameraCanvas.toDataURL('image/png');
+      snapshotImg.src = dataUrl;
+      snapshotImg.style.display = 'block';
+
+      // 拍照后关闭摄像头
+      stream.getTracks().forEach(track => track.stop());
+      cameraPreview.style.display = 'none';
+    };
+  } catch (error) {
+    alert('无法访问摄像头：' + error.message);
+  }
+});
+
+// ASR 语音识别
+asrBtn.addEventListener('click', () => {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    alert('当前浏览器不支持语音识别，请使用桌面版 Chrome 或 Edge。');
+    return;
+  }
+
+  const recognition = new SpeechRecognition();
+  recognition.lang = 'zh-CN';
+  recognition.interimResults = false;
+
+  recognition.onresult = (event) => {
+    const text = event.results[0][0].transcript;
+    asrResult.textContent = '识别结果：' + text;
+
+    // 固定指令：朗读状态
+    if (text.includes('朗读状态') || text.includes('朗读')) {
+      speakCurrentStatus();
+    }
+  };
+
+  recognition.onerror = (event) => {
+    asrResult.textContent = '识别失败：' + event.error;
+  };
+
+  recognition.start();
+});
+
+// TTS 朗读当前状态
+function speakCurrentStatus() {
+  const status = statusText.textContent || '当前没有状态';
+  const utterance = new SpeechSynthesisUtterance(status);
+  utterance.lang = 'zh-CN';
+  speechSynthesis.speak(utterance);
+}
+
+ttsBtn.addEventListener('click', speakCurrentStatus);

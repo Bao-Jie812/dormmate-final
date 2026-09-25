@@ -35,6 +35,27 @@
       <h2>历史记录</h2>
       <ul id="historyList"></ul>
     </section>
+
+    <section class="export-area" style="margin-top: 24px;">
+        <button id="exportBtn">导出 CSV</button>
+    </section>
+
+    <section class="camera-area" style="margin-top: 24px;">
+    <h2>现场快照</h2>
+    <button id="cameraBtn">打开摄像头并拍照</button>
+    <div style="margin-top: 12px;">
+        <video id="cameraPreview" autoplay playsinline style="max-width: 100%; display: none;"></video>
+        <canvas id="cameraCanvas" style="display: none;"></canvas>
+        <img id="snapshotImg" alt="现场快照" style="max-width: 100%; display: none;" />
+    </div>
+    </section>
+
+    <section class="voice-area" style="margin-top: 24px;">
+    <h2>语音交互</h2>
+    <button id="asrBtn">开始语音识别</button>
+    <button id="ttsBtn">朗读当前状态</button>
+    <p id="asrResult">识别结果：暂无</p>
+    </section>
   </main>
 
   <script src="script.js"></script>
