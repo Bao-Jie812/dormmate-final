@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DormMate - Web 主应用</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="dormmate-card">
+    <h1>DormMate</h1>
+    <p class="subtitle">宿舍环境助手 · M1 Web 主应用</p>
+
+    <section class="input-area">
+      <label>
+        温度（℃）
+        <input type="number" id="temperatureInput" placeholder="例如 31" step="0.1" />
+      </label>
+
+      <label>
+        湿度（%）
+        <input type="number" id="humidityInput" placeholder="例如 78" step="0.1" />
+      </label>
+
+      <button id="analyzeBtn">分析环境</button>
+    </section>
+
+    <section class="result-area">
+      <h2>当前结果</h2>
+      <p id="statusText">尚未分析</p>
+      <p id="adviceText">请输入温湿度后点击“分析环境”。</p>
+    </section>
+
+    <section class="history-area">
+      <h2>历史记录</h2>
+      <ul id="historyList"></ul>
+    </section>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
