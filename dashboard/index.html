@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DormMate - 实时 Dashboard</title>
+  <!-- 引入 Chart.js 和 mqtt.js -->
+  <script src="https://cdn.bootcdn.net/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+  <script src="https://cdn.bootcdn.net/ajax/libs/mqtt/5.3.4/mqtt.min.js"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #f3f6fb; margin: 0; padding: 20px; }
+    h1 { color: #2563eb; text-align: center; }
+    .cards { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; margin-bottom: 20px; }
+    .card { background: white; padding: 20px; border-radius: 12px; width: 200px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); text-align: center; }
+    .card h3 { margin: 0 0 10px 0; color: #333; }
+    .card .value { font-size: 14px; color: #666; margin-bottom: 6px; }
+    .card .status { font-size: 20px; font-weight: bold; }
+    .status.正常 { color: #16a34a; }
+    .status.偏热 { color: #dc2626; }
+    .status.偏冷 { color: #2563eb; }
+    .status.偏湿 { color: #d97706; }
+    .chart-container { background: white; padding: 20px; border-radius: 12px; max-width: 800px; margin: 0 auto; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+  </style>
+</head>
+<body>
+  <h1>DormMate 实时 Dashboard</h1>
+  
+  <div class="cards">
+    <div class="card" id="card-dorm-a">
+      <h3>dorm-a</h3>
+      <div class="value">当前：暂无数据</div>
+      <div class="status">等待数据</div>
+    </div>
+    <div class="card" id="card-dorm-b">
+      <h3>dorm-b</h3>
+      <div class="value">当前：暂无数据</div>
+      <div class="status">等待数据</div>
+    </div>
+    <div class="card" id="card-dorm-c">
+      <h3>dorm-c</h3>
+      <div class="value">当前：暂无数据</div>
+      <div class="status">等待数据</div>
+    </div>
+  </div>
+
+  <div class="chart-container">
+    <canvas id="trendChart"></canvas>
+  </div>
+
+  <script>
+    // 1. 连接本机 Broker 的 WebSocket 端口
+    const client = mqtt.connect('ws://127.0.0.1:8083');
+
+    // 2. 准备趋势图
+    const ctx = document.getElementById('trendChart').getContext('2d');
+    const chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: [], // 时间轴
+        datasets: [
+          { label: 'dorm-a 温度', data: [], borderColor: '#2563eb', fill: false, tension: 0.1 },
+          { label: 'dorm-b 温度', data: [], borderColor: '#16a34a', fill: false, tension: 0.1 },
+          { label: 'dorm-c 温度', data: [], borderColor: '#d97706', fill: false, tension: 0.1 }
+        ]
+      },
+      options: { responsive: true, animation: false }
+    });
+
+    // 3. 连接成功后的回调
+    client.on('connect', () => {
+      console.log('已连接到本机 MQTT Broker');
+      // 订阅所有节点的 Topic，+ 是通配符
+      client.subscribe('dormmate/+/env');
+    });
+
+    // 4. 收到消息后的处理
+    client.on('message', (topic, message) => {
+      try {
+        const data = JSON.parse(message.toString());
+        const nodeId = data.nodeId;
+        const status = data.status;
+
+        // 更新对应卡片的数值和状态
+        const card = document.getElementById(`card-${nodeId}`);
+        if (card) {
+          card.querySelector('.value').textContent = `当前：${data.temperature}℃ / ${data.humidity}%`;
+          const statusEl = card.querySelector('.status');
+          statusEl.textContent = status;
+          statusEl.className = `status ${status}`;
+        }
+
+        // 更新趋势图（简单示例：把最新数据加在末尾，保留最近 10 条）
+        const timeLabel = data.time.substring(11, 16); // 只取时分
+        if (chart.data.labels.length > 10) {
+          chart.data.labels.shift();
+          chart.data.datasets.forEach(d => d.data.shift());
+        }
+        chart.data.labels.push(timeLabel);
+        
+        // 根据 nodeId 更新对应的数据集
+        chart.data.datasets.forEach(dataset => {
+          if (dataset.label.includes(nodeId)) {
+            dataset.data.push(data.temperature);
+          } else {
+            // 如果这次没收到该节点的数据，为了图表对齐，补一个 null 或者上一个值
+            dataset.data.push(dataset.data[dataset.data.length - 1] || null);
+          }
+        });
+        chart.update();
+
+      } catch (e) {
+        console.error('消息解析错误:', e);
+      }
+    });
+  </script>
+</body>
+</html>
