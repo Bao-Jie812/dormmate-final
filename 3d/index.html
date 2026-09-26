@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DormMate - 3D 数字宿舍</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #e2e8f0; font-family: system-ui, -apple-system, sans-serif; }
+
+    #info {
+      position: absolute; top: 24px; left: 24px;
+      background: rgba(255, 255, 255, 0.9);
+      backdrop-filter: blur(8px);
+      color: #1e293b; padding: 16px 24px;
+      border-radius: 14px;
+      border: 1px solid rgba(0, 0, 0, 0.06);
+      pointer-events: none;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+    }
+    #info h2 { margin: 0 0 8px 0; font-size: 16px; color: #64748b; font-weight: 500; }
+    #info .status { font-size: 24px; font-weight: 700; }
+    .status.正常 { color: #16a34a; }
+    .status.偏热 { color: #dc2626; }
+    .status.偏冷 { color: #2563eb; }
+    .status.偏湿 { color: #d97706; }
+
+    #dataPanel {
+      position: absolute; bottom: 24px; right: 24px;
+      background: rgba(255, 255, 255, 0.9);
+      backdrop-filter: blur(8px);
+      color: #475569; padding: 14px 20px;
+      border-radius: 14px;
+      border: 1px solid rgba(0, 0, 0, 0.06);
+      font-size: 14px; line-height: 1.8;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+    }
+    #dataPanel span { color: #1e293b; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div id="info">
+    <h2>DormMate 3D 宿舍 · dorm-a</h2>
+    <div>当前状态：<span class="status" id="statusText">等待 MQTT 数据...</span></div>
+  </div>
+
+  <div id="dataPanel">
+    <div>温度：<span id="tempText">--</span>℃</div>
+    <div>湿度：<span id="humText">--</span>%</div>
+    <div>更新：<span id="timeText">--</span></div>
+  </div>
+
+  <script src="https://cdn.bootcdn.net/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.bootcdn.net/ajax/libs/mqtt/5.3.4/mqtt.min.js"></script>
+
+  <script>
+    // ================= 1. 场景基础 =================
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xe2e8f0);
+    scene.fog = new THREE.Fog(0xe2e8f0, 18, 35);
+
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(6, 6, 10);
+    camera.lookAt(0, 1.5, 0);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.shadowMap.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    // 灯光
+    const ambient = new THREE.AmbientLight(0xffffff, 0.7);
+    scene.add(ambient);
+
+    const mainLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    mainLight.position.set(5, 10, 7);
+    mainLight.castShadow = true;
+    mainLight.shadow.mapSize.width = 1024;
+    mainLight.shadow.mapSize.height = 1024;
+    scene.add(mainLight);
+
+    const fillLight = new THREE.PointLight(0xbfdbfe, 0.5);
+    fillLight.position.set(-5, 5, -5);
+    scene.add(fillLight);
+
+    // ================= 2. 3D 对象 =================
+    // 地板（浅木色）
+    const floorGeo = new THREE.BoxGeometry(10, 0.2, 10);
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0xe7d3b3, roughness: 0.9 });
+    const floor = new THREE.Mesh(floorGeo, floorMat);
+    floor.position.y = -0.1;
+    floor.receiveShadow = true;
+    scene.add(floor);
+
+    const grid = new THREE.GridHelper(10, 20, 0xcbd5e1, 0xd6d3d1);
+    grid.position.y = 0.01;
+    scene.add(grid);
+
+    // 风扇
+    const fanGroup = new THREE.Group();
+
+    const poleGeo = new THREE.CylinderGeometry(0.08, 0.12, 2.5, 16);
+    const poleMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.3, roughness: 0.6 });
+    const pole = new THREE.Mesh(poleGeo, poleMat);
+    pole.position.y = 1.25;
+    pole.castShadow = true;
+    fanGroup.add(pole);
+
+    const baseGeo = new THREE.CylinderGeometry(0.6, 0.7, 0.15, 32);
+    const baseMat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.3, roughness: 0.6 });
+    const base = new THREE.Mesh(baseGeo, baseMat);
+    base.position.y = 0.075;
+    base.castShadow = true;
+    fanGroup.add(base);
+
+    const headGroup = new THREE.Group();
+    headGroup.position.y = 2.6;
+
+    const headGeo = new THREE.CylinderGeometry(0.7, 0.7, 0.3, 32);
+    const headMat = new THREE.MeshStandardMaterial({ color: 0xf1f5f9, metalness: 0.2, roughness: 0.7 });
+    const head = new THREE.Mesh(headGeo, headMat);
+    head.rotation.x = Math.PI / 2;
+    head.castShadow = true;
+    headGroup.add(head);
+
+    const bladeGeo = new THREE.BoxGeometry(1.1, 0.05, 0.25);
+    const bladeMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
+    for (let i = 0; i < 3; i++) {
+      const blade = new THREE.Mesh(bladeGeo, bladeMat);
+      blade.position.z = 0.16;
+      blade.rotation.z = (i * Math.PI * 2) / 3;
+      blade.castShadow = true;
+      headGroup.add(blade);
+    }
+    fanGroup.add(headGroup);
+
+    fanGroup.position.set(-2.5, 0, 0);
+    scene.add(fanGroup);
+
+    // 窗户（浅色木框 + 浅蓝玻璃）
+    const windowGroup = new THREE.Group();
+    const frameGeo = new THREE.BoxGeometry(3.4, 2.4, 0.1);
+    const frameMat = new THREE.MeshStandardMaterial({ color: 0xd6d3d1 });
+    const frame = new THREE.Mesh(frameGeo, frameMat);
+    windowGroup.add(frame);
+
+    const glassGeo = new THREE.PlaneGeometry(3, 2);
+    const glassMat = new THREE.MeshStandardMaterial({
+      color: 0xbfdbfe, emissive: 0x60a5fa, emissiveIntensity: 0.2
+    });
+    const glass = new THREE.Mesh(glassGeo, glassMat);
+    glass.position.z = 0.06;
+    windowGroup.add(glass);
+
+    windowGroup.position.set(2.5, 2.5, -4.9);
+    scene.add(windowGroup);
+
+    // ================= 3. 状态映射（浅色柔和版） =================
+    let fanSpeed = 0.02;
+
+    function updateScene(status) {
+      document.getElementById('statusText').textContent = status;
+
+      switch (status) {
+        case '正常':
+          fanSpeed = 0.02;
+          floorMat.color.set(0xe7d3b3); // 浅木色
+          glassMat.color.set(0xbfdbfe); // 浅蓝
+          glassMat.emissive.set(0x60a5fa);
+          glassMat.emissiveIntensity = 0.2;
+          break;
+        case '偏热':
+          fanSpeed = 0.35;
+          floorMat.color.set(0xfecaca); // 浅粉红
+          glassMat.color.set(0xfecaca);
+          glassMat.emissive.set(0xf87171);
+          glassMat.emissiveIntensity = 0.4;
+          break;
+        case '偏冷':
+          fanSpeed = 0;
+          floorMat.color.set(0xbfdbfe); // 浅蓝
+          glassMat.color.set(0xbfdbfe);
+          glassMat.emissive.set(0x60a5fa);
+          glassMat.emissiveIntensity = 0.4;
+          break;
+        case '偏湿':
+          fanSpeed = 0.12;
+          floorMat.color.set(0xfde68a); // 浅黄
+          glassMat.color.set(0xfde68a);
+          glassMat.emissive.set(0xfbbf24);
+          glassMat.emissiveIntensity = 0.4;
+          break;
+      }
+      floorMat.needsUpdate = true;
+      glassMat.needsUpdate = true;
+    }
+
+    // ================= 4. 动画循环 =================
+    function animate() {
+      requestAnimationFrame(animate);
+      headGroup.rotation.z += fanSpeed;
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    // ================= 5. MQTT 连接 =================
+    const client = mqtt.connect('ws://127.0.0.1:8083');
+    client.on('connect', () => {
+      console.log('3D 场景已连接 MQTT Broker');
+      client.subscribe('dormmate/dorm-a/env');
+    });
+
+    client.on('message', (topic, message) => {
+      try {
+        const data = JSON.parse(message.toString());
+        if (data.nodeId === 'dorm-a') {
+          updateScene(data.status);
+          document.getElementById('tempText').textContent = data.temperature;
+          document.getElementById('humText').textContent = data.humidity;
+          document.getElementById('timeText').textContent = data.time.substring(11, 16);
+        }
+      } catch (e) {
+        console.error('JSON 解析错误:', e);
+      }
+    });
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>

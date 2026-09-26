@@ -19,3 +19,20 @@
 - MQTT.js
 - Three.js
 - pandas / matplotlib
+
+## M6 自主小改进与真实 Bug 记录
+
+### 自主小改进：风扇转速随温度变化
+- **问题**：3D 场景如果所有状态风扇转速一样，看不出温度差异。
+- **最小改动**：在 `updateScene(status)` 里，根据状态设置不同的 `fanSpeed`：
+  - 偏热：`fanSpeed = 0.3`（快速转）
+  - 正常：`fanSpeed = 0.02`（慢速转）
+  - 偏冷：`fanSpeed = 0`（停止）
+  - 偏湿：`fanSpeed = 0.1`（中速转）
+- **验证**：用 MQTTX 发 31℃、25℃、16℃ 三组数据，风扇分别表现为快速转、慢速转、停止，与预期一致。
+
+### 真实 Bug 与修复
+- **现象**：第一次测试时，MQTTX 发消息后 3D 场景不响应，左上角状态一直是“等待数据”。
+- **定位**：打开浏览器控制台（F12），发现订阅 Topic 写成了 `dormmate/dorm-a`，而 MQTTX 实际发送的 Topic 是 `dormmate/dorm-a/env`。
+- **修复**：把 `client.subscribe('dormmate/dorm-a')` 改为 `client.subscribe('dormmate/dorm-a/env')`，保存后刷新页面，3D 成功实时响应 MQTT 数据。
+- **验证**：重新发送三种状态的 JSON，3D 场景均能正常变色、变速。
