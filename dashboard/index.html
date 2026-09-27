@@ -87,6 +87,15 @@
     <canvas id="trendChart"></canvas>
   </div>
 
+  <div id="todaySummary" style="
+  max-width: 800px; margin: 20px auto; padding: 18px;
+  background: #ffffff; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  color: #1e293b; line-height: 1.7; font-size: 15px;
+">
+  <strong>今日摘要</strong>
+  <div id="todaySummaryText" style="margin-top: 8px; color: #475569;">正在汇总...</div>
+</div>
+
   <!-- A4: 事件记录区块 -->
   <div class="event-log-container">
     <h3>今日事件复盘</h3>
@@ -269,16 +278,37 @@
         overviewEl.textContent = '当前 3 个宿舍状态全部正常。';
       }
 
-      // B2: 更新优先关注横幅
-      const banner = document.getElementById('priorityBanner');
-      if (priorityNodeId) {
-        const minutes = Math.floor(maxDurationSec / 60);
-        const displayMinutes = minutes < 1 ? '不到 1' : minutes;
-        banner.innerHTML = `⚠️ 优先关注 ${priorityNodeId}：已持续异常 ${displayMinutes} 分钟，累计 ${maxCount} 次。`;
-        banner.style.display = 'block';
+      // 更新横幅（含对比说明）
+const banner = document.getElementById('priorityBanner');
+if (priorityNodeId) {
+  const minutes = Math.floor(maxDurationSec / 60);
+  const displayMinutes = minutes < 1 ? '不到 1' : minutes;
+
+  let compareTexts = [];
+  for (const [id, node] of Object.entries(nodeState)) {
+    if (id !== priorityNodeId) {
+      if (node.status === '正常') {
+        compareTexts.push(`${id} 当前正常`);
+      } else if (node.status === '等待数据') {
+        compareTexts.push(`${id} 暂无数据`);
       } else {
-        banner.style.display = 'none';
+        if (node.abnormalSince) {
+          const otherDuration = Math.floor(Math.max(0, (now - node.abnormalSince) / 1000) / 60);
+          compareTexts.push(`${id} 虽然${node.status}，但只持续 ${otherDuration < 1 ? '不到 1' : otherDuration} 分钟`);
+        } else {
+          compareTexts.push(`${id} 虽然${node.status}，但时间较短`);
+        }
       }
+    }
+  }
+
+  banner.innerHTML =
+    `⚠️ 优先关注 <strong>${priorityNodeId}</strong>：已持续异常 ${displayMinutes} 分钟，累计 ${maxCount} 次；` +
+    compareTexts.join('；') + '。';
+  banner.style.display = 'block';
+} else {
+  banner.style.display = 'none';
+}
 
       // 更新卡片 UI（按钮、处理状态、高亮）
       nodes.forEach(id => {
@@ -318,6 +348,7 @@
           if (processStatus) processStatus.style.display = 'none';
         }
       });
+          updateTodaySummary();
 
       // A4: 刷新事件列表（每条记录展示完整事件信息）
       const logList = document.getElementById('eventLogList');
@@ -438,9 +469,42 @@
       });
     }
 
+    function updateTodaySummary() {
+  const el = document.getElementById('todaySummaryText');
+  if (!el) return;
+
+  const recovered = eventLogs.filter(e => e.result === '已恢复');
+  const processing = eventLogs.filter(e => e.result === '处理中');
+
+  if (recovered.length === 0 && processing.length === 0) {
+    el.textContent = '今日三个宿舍均未出现异常事件。';
+    return;
+  }
+
+  let text = `今日共发生 ${eventLogs.length} 次需要关注的环境事件。`;
+
+  eventLogs.forEach(e => {
+    text += ` ${e.nodeId} 于 ${e.startTime} 出现${e.problem}，`;
+    if (e.result === '已恢复') {
+      text += `开启风扇处理后于 ${e.restoreTime} 恢复；`;
+    } else {
+      text += `已于 ${e.actionTime} 开启风扇处理，仍在等待后续数据验证；`;
+    }
+  });
+
+  const normalNodes = nodes.filter(id =>
+    !eventLogs.some(e => e.nodeId === id)
+  );
+  if (normalNodes.length > 0) {
+    text += ` ${normalNodes.join('、')} 今日整体正常。`;
+  }
+
+  el.textContent = text;
+}
     // ================== 7. 初始化 ==================
     initChart();
     initMQTT();
+    updateTodaySummary();
   </script>
 </body>
 </html>

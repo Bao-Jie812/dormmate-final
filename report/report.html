@@ -4,18 +4,28 @@
 <head><meta charset="UTF-8"><title>DormMate 环境报告</title></head>
 <body>
 <h1>DormMate 环境报告</h1>
-<p>记录数: 3</p>
-<p>温度最高: 35℃, 最低: 10℃</p>
-<p>湿度最高: 90%, 最低: 40%</p>
+<p>记录数: 4</p>
+<p>温度最高: 35℃, 最低: 25℃</p>
+<p>湿度最高: 60%, 最低: 60%</p>
 <h2>状态统计</h2>
 <ul>
-    <li>偏热: 1 条</li><li>偏湿: 1 条</li><li>偏冷: 1 条</li>
+    <li>偏热: 2 条</li><li>正常: 2 条</li>
 </ul>
 <h2>需要关注的记录</h2>
 <table border="1">
-    <tr><th>时间</th><th>温度</th><th>湿度</th><th>状态</th></tr>
-    <tr><td>2026-09-25 15:50:42</td><td>35</td><td>50</td><td>偏热</td></tr><tr><td>2026-09-25 15:50:35</td><td>28</td><td>90</td><td>偏湿</td></tr><tr><td>2026-09-25 15:50:26</td><td>10</td><td>40</td><td>偏冷</td></tr>
+    <tr><th>时间</th><th>温度</th><th>湿度</th><th>状态</th><th>ML 判断</th></tr>
+    <tr><td>2026-09-27 14:50:00</td><td>35</td><td>60</td><td>偏热</td><td>正常</td></tr><tr><td>2026-09-27 14:08:00</td><td>35</td><td>60</td><td>偏热</td><td>正常</td></tr>
 </table>
+<h2>ML 异常分析</h2>
+<p>模型: IsolationForest (n_estimators=100, contamination='auto', random_state=42)，特征: temperature + humidity</p>
+<p>训练样本: 4 条，其中被模型标记为异常: 0 条</p>
+<table border="1">
+    <tr><th>当前值</th><th>固定规则状态</th><th>ML 判断</th></tr>
+    <tr><td>29℃ / 72%</td><td>正常</td><td>正常 (predict=1)</td></tr>
+</table>
+<p>决策函数值: 0.0270（predict 返回 1 为正常、-1 为异常；score 越负越异常）</p>
+<h3>判断差异说明（自动生成）</h3>
+<p>本次有 <b>2</b> 条记录两种判断不一致：35℃/60%（规则「偏热」/ ML「正常」，该组合在 4 条样本中出现 2 次）；35℃/60%（规则「偏热」/ ML「正常」，该组合在 4 条样本中出现 2 次）。</p><p>这是<b>方法定位不同，不是模型出错</b>：固定规则是<b>绝对阈值</b>，只看单条数据本身是否越过 18℃ / 30℃ / 75% 这几条红线，与历史数据无关；IsolationForest 是<b>相对离群度</b>，判断的是这条数据在历史样本中是否罕见，与阈值无关。</p><p>上表中被规则判为「偏热」的记录，其温湿度组合在训练集里已多次出现，在模型眼中属于常见状态，因此 ML 判为正常。两者结论独立，可以理解为：<b>规则管红线，ML 管离群</b>。</p><p>⚠️ 当前训练样本仅 <b>4</b> 条，模型能学到的分布有限，ML 结论的稳定性需要更多不同温湿度组合的样本支撑。</p>
 <h2>趋势图</h2>
 <img src="trend.png" alt="Trend" style="max-width: 100%;">
 </body>
