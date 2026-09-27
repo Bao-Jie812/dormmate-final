@@ -8,14 +8,68 @@
   font-size: 48rpx;
   font-weight: bold;
   color: #2563eb;
-  margin-bottom: 20rpx;
+  margin-bottom: 10rpx;
 }
 
 .subtitle {
   color: #6b7280;
   margin-bottom: 40rpx;
+  font-size: 26rpx;
 }
 
+/* 顶部切换按钮区域 */
+.node-switch {
+  margin-bottom: 30rpx;
+}
+
+.node-switch-label {
+  display: block;
+  font-weight: bold;
+  margin-bottom: 12rpx;
+  font-size: 28rpx;
+  color: #333;
+}
+
+.node-buttons {
+  display: flex;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+/* 每个按钮平分宽度。
+   注意：小程序原生 button 自带 padding 0 14px、margin auto、背景 #f8f8f8、
+   圆角 5px、line-height 2.55 和 ::after 灰边框，全部要在这一条里覆盖掉。
+   不要再单独写一条 .node-buttons button 去做重置——那条特异性(0,1,1)比这条的
+   (0,1,0)更高，会反过来把这里的 background / border-radius / margin 全压掉，
+   按钮就会变成没底色没间距的三坨文字，看起来"分布不均衡" */
+.node-buttons .switch-label {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  text-align: center;
+  font-size: 24rpx;
+  line-height: 1.6;
+  padding: 12rpx 0;
+  margin: 0 4rpx;
+  background: #f1f5f9;
+  color: #334155;
+  border: none;
+  border-radius: 8rpx;
+}
+
+.node-buttons .switch-label::after {
+  border: none;
+}
+
+/* 当前选中的宿舍：高亮。没有这条的话点了按钮页面没有任何视觉变化，会以为没反应 */
+.node-buttons .switch-label-active {
+  background: #2563eb;
+  color: #ffffff;
+}
+
+/* 输入区域 */
 .input-group {
   margin-bottom: 30rpx;
   display: flex;
@@ -25,21 +79,26 @@
 .input-group text {
   margin-bottom: 10rpx;
   font-weight: bold;
+  font-size: 28rpx;
 }
 
 .input-group input {
   border: 1px solid #cbd5e1;
   border-radius: 10rpx;
   padding: 20rpx;
+  font-size: 28rpx;
 }
 
+/* 分析按钮 */
 .analyze-btn {
   background-color: #2563eb;
   color: white;
   border-radius: 10rpx;
   margin-bottom: 40rpx;
+  font-size: 30rpx;
 }
 
+/* 结果显示区域 */
 .result {
   background-color: #f8fafc;
   padding: 30rpx;
@@ -50,4 +109,13 @@
 
 .result text {
   margin-bottom: 16rpx;
+  font-size: 28rpx;
+  color: #333;
+}
+
+/* MQTT 状态提示文字 */
+.mqtt-status {
+  font-size: 22rpx;
+  color: #16a34a;
+  margin-top: 10rpx;
 }

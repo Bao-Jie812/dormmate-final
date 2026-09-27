@@ -2,6 +2,19 @@
   <view class="title">DormMate</view>
   <view class="subtitle">宿舍环境助手·移动端 </view>
 
+  <view class="node-switch">
+    <text class="node-switch-label">选择宿舍</text>
+    <view class="node-buttons">
+      <button
+        wx:for="{{nodes}}"
+        wx:key="*this"
+        class="switch-label {{item === selectedNode ? 'switch-label-active' : ''}}"
+        data-node="{{item}}"
+        bindtap="onSelectNode"
+      >{{item}}</button>
+    </view>
+  </view>
+
   <view class="input-group">
     <text>温度（℃）</text>
     <input type="digit" placeholder="例如 31" bindinput="onTempInput" value="{{temperature}}" />
@@ -17,5 +30,6 @@
   <view class="result">
     <text>当前状态：{{status}}</text>
     <text>建议：{{advice}}</text>
+    <text class="mqtt-status">{{mqttStatus}}</text>
   </view>
 </view>

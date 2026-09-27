@@ -11,6 +11,15 @@
     <h1>DormMate</h1>
     <p class="subtitle">宿舍环境助手 · M1 Web 主应用</p>
 
+    <section class="node-area">
+      <label for="nodeSelect">选择宿舍</label>
+      <select id="nodeSelect">
+        <option value="dorm-a" selected>dorm-a</option>
+        <option value="dorm-b">dorm-b</option>
+        <option value="dorm-c">dorm-c</option>
+      </select>
+    </section>
+
     <section class="input-area">
       <label>
         温度（℃）
@@ -29,6 +38,7 @@
       <h2>当前结果</h2>
       <p id="statusText">尚未分析</p>
       <p id="adviceText">请输入温湿度后点击“分析环境”。</p>
+      <p id="mqttStatus" style="font-size: 13px; color: #d97706; margin-top: 12px;">MQTT：未连接</p>
     </section>
 
     <section class="history-area">
@@ -58,6 +68,8 @@
     </section>
   </main>
 
+  <!-- 引入 mqtt.js（与 dashboard / 3d 使用同一 CDN 版本），必须在 script.js 之前 -->
+  <script src="https://cdn.bootcdn.net/ajax/libs/mqtt/5.3.4/mqtt.min.js"></script>
   <script src="script.js"></script>
 </body>
 </html>

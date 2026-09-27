@@ -34,6 +34,34 @@ h1 {
   color: #6b7280;
 }
 
+/* 节点切换：多宿舍数据同步时，选择页面显示哪个宿舍 */
+.node-area {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 24px 0 0 0;
+  padding: 14px 18px;
+  border-radius: 14px;
+  background: #eff6ff;
+  border-left: 6px solid #2563eb;
+}
+
+.node-area label {
+  font-weight: 700;
+  color: #1e3a8a;
+}
+
+.node-area select {
+  flex: 1;
+  padding: 10px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  font-size: 16px;
+  background: #ffffff;
+  color: #1f2937;
+  cursor: pointer;
+}
+
 .input-area {
   display: grid;
   grid-template-columns: 1fr 1fr;

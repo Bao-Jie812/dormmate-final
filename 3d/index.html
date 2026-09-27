@@ -5,220 +5,174 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>DormMate - 3D 数字宿舍</title>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { overflow: hidden; background: #e2e8f0; font-family: system-ui, -apple-system, sans-serif; }
-
+    body { margin: 0; overflow: hidden; background: #f3f6fb; }
     #info {
-      position: absolute; top: 24px; left: 24px;
-      background: rgba(255, 255, 255, 0.9);
-      backdrop-filter: blur(8px);
-      color: #1e293b; padding: 16px 24px;
-      border-radius: 14px;
-      border: 1px solid rgba(0, 0, 0, 0.06);
-      pointer-events: none;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+      position: absolute; top: 20px; left: 20px; color: #1e293b;
+      font-family: system-ui, sans-serif; background: rgba(255,255,255,0.9);
+      padding: 12px 20px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);
     }
-    #info h2 { margin: 0 0 8px 0; font-size: 16px; color: #64748b; font-weight: 500; }
-    #info .status { font-size: 24px; font-weight: 700; }
+    #info h2 { margin: 0 0 8px 0; color: #2563eb; font-size: 18px; }
+    #info .status { font-size: 16px; font-weight: bold; }
     .status.正常 { color: #16a34a; }
     .status.偏热 { color: #dc2626; }
     .status.偏冷 { color: #2563eb; }
     .status.偏湿 { color: #d97706; }
-
-    #dataPanel {
-      position: absolute; bottom: 24px; right: 24px;
-      background: rgba(255, 255, 255, 0.9);
-      backdrop-filter: blur(8px);
-      color: #475569; padding: 14px 20px;
-      border-radius: 14px;
-      border: 1px solid rgba(0, 0, 0, 0.06);
-      font-size: 14px; line-height: 1.8;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
-    }
-    #dataPanel span { color: #1e293b; font-weight: 600; }
   </style>
 </head>
 <body>
   <div id="info">
-    <h2>DormMate 3D 宿舍 · dorm-a</h2>
+    <h2>DormMate 3D 宿舍 (<span id="currentNode">dorm-a</span>)</h2>
     <div>当前状态：<span class="status" id="statusText">等待 MQTT 数据...</span></div>
-  </div>
-
-  <div id="dataPanel">
-    <div>温度：<span id="tempText">--</span>℃</div>
-    <div>湿度：<span id="humText">--</span>%</div>
-    <div>更新：<span id="timeText">--</span></div>
+    <div style="margin-top: 10px; display: flex; gap: 8px;">
+      <button onclick="switchNode('dorm-a')" id="btn-dorm-a" style="padding:4px 12px; border:1px solid #cbd5e1; border-radius:6px; background:#2563eb; color:white; cursor:pointer;">dorm-a</button>
+      <button onclick="switchNode('dorm-b')" id="btn-dorm-b" style="padding:4px 12px; border:1px solid #cbd5e1; border-radius:6px; background:white; color:#1e293b; cursor:pointer;">dorm-b</button>
+      <button onclick="switchNode('dorm-c')" id="btn-dorm-c" style="padding:4px 12px; border:1px solid #cbd5e1; border-radius:6px; background:white; color:#1e293b; cursor:pointer;">dorm-c</button>
+    </div>
   </div>
 
   <script src="https://cdn.bootcdn.net/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.bootcdn.net/ajax/libs/mqtt/5.3.4/mqtt.min.js"></script>
 
   <script>
-    // ================= 1. 场景基础 =================
+    // ================= 1. Three.js 基础场景 =================
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xe2e8f0);
-    scene.fog = new THREE.Fog(0xe2e8f0, 18, 35);
-
-    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-    camera.position.set(6, 6, 10);
-    camera.lookAt(0, 1.5, 0);
-
+    scene.background = new THREE.Color(0xf3f6fb);
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(4, 4, 8);
+    camera.lookAt(0, 0.5, 0);
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.shadowMap.enabled = true;
     document.body.appendChild(renderer.domElement);
 
-    // 灯光
-    const ambient = new THREE.AmbientLight(0xffffff, 0.7);
-    scene.add(ambient);
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+    scene.add(ambientLight);
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    directionalLight.position.set(5, 10, 7);
+    scene.add(directionalLight);
 
-    const mainLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    mainLight.position.set(5, 10, 7);
-    mainLight.castShadow = true;
-    mainLight.shadow.mapSize.width = 1024;
-    mainLight.shadow.mapSize.height = 1024;
-    scene.add(mainLight);
-
-    const fillLight = new THREE.PointLight(0xbfdbfe, 0.5);
-    fillLight.position.set(-5, 5, -5);
-    scene.add(fillLight);
-
-    // ================= 2. 3D 对象 =================
-    // 地板（浅木色）
-    const floorGeo = new THREE.BoxGeometry(10, 0.2, 10);
-    const floorMat = new THREE.MeshStandardMaterial({ color: 0xe7d3b3, roughness: 0.9 });
-    const floor = new THREE.Mesh(floorGeo, floorMat);
+    // ================= 2. 创建 3D 对象 =================
+    const floorGeometry = new THREE.BoxGeometry(8, 0.2, 8);
+    const floorMaterial = new THREE.MeshStandardMaterial({ color: 0xcbd5e1 });
+    const floor = new THREE.Mesh(floorGeometry, floorMaterial);
     floor.position.y = -0.1;
-    floor.receiveShadow = true;
     scene.add(floor);
 
-    const grid = new THREE.GridHelper(10, 20, 0xcbd5e1, 0xd6d3d1);
-    grid.position.y = 0.01;
-    scene.add(grid);
-
-    // 风扇
     const fanGroup = new THREE.Group();
+    const baseGeometry = new THREE.CylinderGeometry(0.6, 0.6, 0.2, 32);
+    const baseMaterial = new THREE.MeshStandardMaterial({ color: 0x64748b });
+    const fanBase = new THREE.Mesh(baseGeometry, baseMaterial);
+    fanBase.position.y = 0.1;
+    fanGroup.add(fanBase);
 
-    const poleGeo = new THREE.CylinderGeometry(0.08, 0.12, 2.5, 16);
-    const poleMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.3, roughness: 0.6 });
-    const pole = new THREE.Mesh(poleGeo, poleMat);
-    pole.position.y = 1.25;
-    pole.castShadow = true;
+    const poleGeometry = new THREE.CylinderGeometry(0.08, 0.08, 1.5, 16);
+    const poleMaterial = new THREE.MeshStandardMaterial({ color: 0x94a3b8 });
+    const pole = new THREE.Mesh(poleGeometry, poleMaterial);
+    pole.position.y = 0.85;
     fanGroup.add(pole);
 
-    const baseGeo = new THREE.CylinderGeometry(0.6, 0.7, 0.15, 32);
-    const baseMat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.3, roughness: 0.6 });
-    const base = new THREE.Mesh(baseGeo, baseMat);
-    base.position.y = 0.075;
-    base.castShadow = true;
-    fanGroup.add(base);
-
     const headGroup = new THREE.Group();
-    headGroup.position.y = 2.6;
+    headGroup.position.y = 1.7;
+    const housingGeometry = new THREE.TorusGeometry(0.8, 0.08, 16, 32);
+    const housingMaterial = new THREE.MeshStandardMaterial({ color: 0x475569 });
+    const housing = new THREE.Mesh(housingGeometry, housingMaterial);
+    headGroup.add(housing);
 
-    const headGeo = new THREE.CylinderGeometry(0.7, 0.7, 0.3, 32);
-    const headMat = new THREE.MeshStandardMaterial({ color: 0xf1f5f9, metalness: 0.2, roughness: 0.7 });
-    const head = new THREE.Mesh(headGeo, headMat);
-    head.rotation.x = Math.PI / 2;
-    head.castShadow = true;
-    headGroup.add(head);
-
-    const bladeGeo = new THREE.BoxGeometry(1.1, 0.05, 0.25);
-    const bladeMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
+    const bladeGroup = new THREE.Group();
     for (let i = 0; i < 3; i++) {
-      const blade = new THREE.Mesh(bladeGeo, bladeMat);
-      blade.position.z = 0.16;
-      blade.rotation.z = (i * Math.PI * 2) / 3;
-      blade.castShadow = true;
-      headGroup.add(blade);
+      const bladeGeometry = new THREE.BoxGeometry(1.5, 0.05, 0.4);
+      const bladeMaterial = new THREE.MeshStandardMaterial({ color: 0x94a3b8 });
+      const blade = new THREE.Mesh(bladeGeometry, bladeMaterial);
+      const angle = (i * 120) * Math.PI / 180;
+      blade.position.set(Math.cos(angle) * 0.75, Math.sin(angle) * 0.75, 0);
+      blade.rotation.z = angle;
+      blade.rotation.x = 0.2;
+      bladeGroup.add(blade);
     }
+    bladeGroup.position.z = 0.1;
+    headGroup.add(bladeGroup);
     fanGroup.add(headGroup);
-
-    fanGroup.position.set(-2.5, 0, 0);
     scene.add(fanGroup);
 
-    // 窗户（浅色木框 + 浅蓝玻璃）
     const windowGroup = new THREE.Group();
-    const frameGeo = new THREE.BoxGeometry(3.4, 2.4, 0.1);
-    const frameMat = new THREE.MeshStandardMaterial({ color: 0xd6d3d1 });
-    const frame = new THREE.Mesh(frameGeo, frameMat);
+    windowGroup.position.set(0, 3, -4);
+    const frameGeometry = new THREE.BoxGeometry(3.4, 2.4, 0.2);
+    const frameMaterial = new THREE.MeshStandardMaterial({ color: 0x94a3b8 });
+    const frame = new THREE.Mesh(frameGeometry, frameMaterial);
     windowGroup.add(frame);
-
-    const glassGeo = new THREE.PlaneGeometry(3, 2);
-    const glassMat = new THREE.MeshStandardMaterial({
-      color: 0xbfdbfe, emissive: 0x60a5fa, emissiveIntensity: 0.2
-    });
-    const glass = new THREE.Mesh(glassGeo, glassMat);
-    glass.position.z = 0.06;
+    const glassGeometry = new THREE.BoxGeometry(3, 2, 0.05);
+    const glassMaterial = new THREE.MeshStandardMaterial({ color: 0x38bdf8, emissive: 0x0ea5e9, transparent: true, opacity: 0.7 });
+    const glass = new THREE.Mesh(glassGeometry, glassMaterial);
+    glass.position.z = 0.1;
     windowGroup.add(glass);
-
-    windowGroup.position.set(2.5, 2.5, -4.9);
     scene.add(windowGroup);
 
-    // ================= 3. 状态映射（浅色柔和版） =================
-    let fanSpeed = 0.02;
+    // ================= 3. 状态映射与更新逻辑 =================
+    let fanSpeed = 0;
 
     function updateScene(status) {
       document.getElementById('statusText').textContent = status;
-
       switch (status) {
-        case '正常':
-          fanSpeed = 0.02;
-          floorMat.color.set(0xe7d3b3); // 浅木色
-          glassMat.color.set(0xbfdbfe); // 浅蓝
-          glassMat.emissive.set(0x60a5fa);
-          glassMat.emissiveIntensity = 0.2;
-          break;
-        case '偏热':
-          fanSpeed = 0.35;
-          floorMat.color.set(0xfecaca); // 浅粉红
-          glassMat.color.set(0xfecaca);
-          glassMat.emissive.set(0xf87171);
-          glassMat.emissiveIntensity = 0.4;
-          break;
-        case '偏冷':
-          fanSpeed = 0;
-          floorMat.color.set(0xbfdbfe); // 浅蓝
-          glassMat.color.set(0xbfdbfe);
-          glassMat.emissive.set(0x60a5fa);
-          glassMat.emissiveIntensity = 0.4;
-          break;
-        case '偏湿':
-          fanSpeed = 0.12;
-          floorMat.color.set(0xfde68a); // 浅黄
-          glassMat.color.set(0xfde68a);
-          glassMat.emissive.set(0xfbbf24);
-          glassMat.emissiveIntensity = 0.4;
-          break;
+        case '正常': fanSpeed = 0.02; floorMaterial.color.set(0xcbd5e1); glassMaterial.color.set(0x38bdf8); break;
+        case '偏热': fanSpeed = 0.4; floorMaterial.color.set(0xfca5a5); glassMaterial.color.set(0xef4444); break;
+        case '偏冷': fanSpeed = 0; floorMaterial.color.set(0x93c5fd); glassMaterial.color.set(0x3b82f6); break;
+        case '偏湿': fanSpeed = 0.15; floorMaterial.color.set(0xfcd34d); glassMaterial.color.set(0xd97706); break;
       }
-      floorMat.needsUpdate = true;
-      glassMat.needsUpdate = true;
+      floorMaterial.needsUpdate = true;
+      glassMaterial.needsUpdate = true;
     }
 
     // ================= 4. 动画循环 =================
     function animate() {
       requestAnimationFrame(animate);
-      headGroup.rotation.z += fanSpeed;
+      bladeGroup.rotation.z += fanSpeed;
       renderer.render(scene, camera);
     }
     animate();
 
-    // ================= 5. MQTT 连接 =================
+    // ================= 5. MQTT 连接与实时驱动 =================
+    let currentNodeId = 'dorm-a';
+    const latestData = {};
+
+    function switchNode(nodeId) {
+      currentNodeId = nodeId;
+      document.getElementById('currentNode').textContent = nodeId;
+      ['dorm-a', 'dorm-b', 'dorm-c'].forEach(id => {
+        const btn = document.getElementById(`btn-${id}`);
+        if (id === nodeId) {
+          btn.style.background = '#2563eb';
+          btn.style.color = 'white';
+        } else {
+          btn.style.background = 'white';
+          btn.style.color = '#1e293b';
+        }
+      });
+      if (latestData[nodeId]) {
+        updateScene(latestData[nodeId].status);
+      } else {
+        document.getElementById('statusText').textContent = '等待 MQTT 数据...';
+      }
+    }
+
     const client = mqtt.connect('ws://127.0.0.1:8083');
     client.on('connect', () => {
-      console.log('3D 场景已连接 MQTT Broker');
-      client.subscribe('dormmate/dorm-a/env');
+      console.log('3D 场景已连接到 MQTT Broker');
+      client.subscribe(['dormmate/+/env', 'dormmate/+/action']);
     });
 
     client.on('message', (topic, message) => {
       try {
         const data = JSON.parse(message.toString());
-        if (data.nodeId === 'dorm-a') {
-          updateScene(data.status);
-          document.getElementById('tempText').textContent = data.temperature;
-          document.getElementById('humText').textContent = data.humidity;
-          document.getElementById('timeText').textContent = data.time.substring(11, 16);
+        if (data.nodeId && data.status) {
+          latestData[data.nodeId] = data;
+          if (data.nodeId === currentNodeId) {
+            updateScene(data.status);
+          }
+        }
+        if (data.action === 'turn_on_fan') {
+          if (data.nodeId === currentNodeId) {
+            fanSpeed = 0.4;
+            console.log(`收到 ${data.nodeId} 开启风扇指令，3D 风扇启动！`);
+          }
         }
       } catch (e) {
         console.error('JSON 解析错误:', e);

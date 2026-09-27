@@ -10,36 +10,76 @@
   <style>
     body { font-family: system-ui, sans-serif; background: #f3f6fb; margin: 0; padding: 20px; }
     h1 { color: #2563eb; text-align: center; }
+    
+    #overviewBanner {
+      max-width: 800px; margin: 0 auto 15px auto; padding: 12px;
+      background: #e0f2fe; border-left: 6px solid #0284c7; border-radius: 8px;
+      color: #075985; font-size: 15px;
+    }
+
+    #priorityBanner {
+      max-width: 800px; margin: 0 auto 20px auto; padding: 15px;
+      background: #fef3c7; border-left: 6px solid #d97706; border-radius: 8px;
+      color: #92400e; font-size: 16px; display: none;
+    }
+
     .cards { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; margin-bottom: 20px; }
-    .card { background: white; padding: 20px; border-radius: 12px; width: 200px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); text-align: center; }
+    .card { background: white; padding: 20px; border-radius: 12px; width: 200px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); text-align: center; transition: all 0.3s; }
     .card h3 { margin: 0 0 10px 0; color: #333; }
     .card .value { font-size: 14px; color: #666; margin-bottom: 6px; }
     .card .status { font-size: 20px; font-weight: bold; }
+    .card.priority { border: 3px solid #d97706; box-shadow: 0 0 15px rgba(217, 119, 6, 0.4); transform: translateY(-2px); }
+
     .status.正常 { color: #16a34a; }
     .status.偏热 { color: #dc2626; }
     .status.偏冷 { color: #2563eb; }
     .status.偏湿 { color: #d97706; }
+
     .chart-container { background: white; padding: 20px; border-radius: 12px; max-width: 800px; margin: 0 auto; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+    
+    .event-log-container {
+      max-width: 800px; margin: 20px auto; padding: 20px;
+      background: white; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+    .event-log-container h3 { margin-top: 0; color: #1e293b; }
+    #eventLogList { padding-left: 0; list-style: none; color: #475569; line-height: 1.8; }
+    /* A4: 单条事件复盘卡片 */
+    #eventLogList .event-item {
+      background: #f8fafc; border-left: 4px solid #d97706; border-radius: 6px;
+      padding: 10px 14px; margin-bottom: 12px;
+    }
+    #eventLogList .event-item.is-restored { border-left-color: #16a34a; }
+    #eventLogList .event-title { font-weight: bold; color: #1e293b; margin-bottom: 4px; }
+    #eventLogList .event-line { font-size: 14px; }
   </style>
 </head>
 <body>
   <h1>DormMate 实时 Dashboard</h1>
   
+  <div id="overviewBanner">正在生成当前总览...</div>
+  <div id="priorityBanner">正在计算优先关注...</div>
+
   <div class="cards">
     <div class="card" id="card-dorm-a">
       <h3>dorm-a</h3>
       <div class="value">当前：暂无数据</div>
       <div class="status">等待数据</div>
+      <button class="action-btn" onclick="handleAction('dorm-a')" style="display:none; margin-top:10px; padding:6px 12px; background:#2563eb; color:white; border:none; border-radius:6px; cursor:pointer;">开启风扇</button>
+      <div class="process-status" style="display:none; margin-top:8px; color:#d97706; font-weight:bold;"></div>
     </div>
     <div class="card" id="card-dorm-b">
       <h3>dorm-b</h3>
       <div class="value">当前：暂无数据</div>
       <div class="status">等待数据</div>
+      <button class="action-btn" onclick="handleAction('dorm-b')" style="display:none; margin-top:10px; padding:6px 12px; background:#2563eb; color:white; border:none; border-radius:6px; cursor:pointer;">开启风扇</button>
+      <div class="process-status" style="display:none; margin-top:8px; color:#d97706; font-weight:bold;"></div>
     </div>
     <div class="card" id="card-dorm-c">
       <h3>dorm-c</h3>
       <div class="value">当前：暂无数据</div>
       <div class="status">等待数据</div>
+      <button class="action-btn" onclick="handleAction('dorm-c')" style="display:none; margin-top:10px; padding:6px 12px; background:#2563eb; color:white; border:none; border-radius:6px; cursor:pointer;">开启风扇</button>
+      <div class="process-status" style="display:none; margin-top:8px; color:#d97706; font-weight:bold;"></div>
     </div>
   </div>
 
@@ -47,71 +87,360 @@
     <canvas id="trendChart"></canvas>
   </div>
 
+  <!-- A4: 事件记录区块 -->
+  <div class="event-log-container">
+    <h3>今日事件复盘</h3>
+    <ul id="eventLogList">
+      <li>暂无事件记录</li>
+    </ul>
+  </div>
+
   <script>
-    // 1. 连接本机 Broker 的 WebSocket 端口
-    const client = mqtt.connect('ws://127.0.0.1:8083');
+    // ================== 1. 全局状态管理 ==================
+    const nodes = ['dorm-a', 'dorm-b', 'dorm-c'];
+    const nodeState = {
+      'dorm-a': { status: '等待数据', abnormalSince: null, abnormalCount: 0 },
+      'dorm-b': { status: '等待数据', abnormalSince: null, abnormalCount: 0 },
+      'dorm-c': { status: '等待数据', abnormalSince: null, abnormalCount: 0 }
+    };
+    
+    const processingState = {
+      'dorm-a': null, 'dorm-b': null, 'dorm-c': null
+    };
 
-    // 2. 准备趋势图
-    const ctx = document.getElementById('trendChart').getContext('2d');
-    const chart = new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: [], // 时间轴
-        datasets: [
-          { label: 'dorm-a 温度', data: [], borderColor: '#2563eb', fill: false, tension: 0.1 },
-          { label: 'dorm-b 温度', data: [], borderColor: '#16a34a', fill: false, tension: 0.1 },
-          { label: 'dorm-c 温度', data: [], borderColor: '#d97706', fill: false, tension: 0.1 }
-        ]
-      },
-      options: { responsive: true, animation: false }
-    });
+    // A4: 事件日志数组（每条记录包含完整事件信息）
+    const eventLogs = [];
 
-    // 3. 连接成功后的回调
-    client.on('connect', () => {
-      console.log('已连接到本机 MQTT Broker');
-      // 订阅所有节点的 Topic，+ 是通配符
-      client.subscribe('dormmate/+/env');
-    });
+    // A4: 各节点最近一次上报值，供事件复盘记录"问题"时引用
+    const latestReading = { 'dorm-a': null, 'dorm-b': null, 'dorm-c': null };
 
-    // 4. 收到消息后的处理
-    client.on('message', (topic, message) => {
-      try {
-        const data = JSON.parse(message.toString());
-        const nodeId = data.nodeId;
-        const status = data.status;
+    // A4: 格式化为 "2026-09-26 19:21:31"（本地时间）
+    function formatDateTime(date) {
+      const pad = n => String(n).padStart(2, '0');
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
+             `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+    }
 
-        // 更新对应卡片的数值和状态
-        const card = document.getElementById(`card-${nodeId}`);
-        if (card) {
-          card.querySelector('.value').textContent = `当前：${data.temperature}℃ / ${data.humidity}%`;
-          const statusEl = card.querySelector('.status');
-          statusEl.textContent = status;
-          statusEl.className = `status ${status}`;
+    // A4: 数值缺失时兜底显示
+    function fmtValue(v) {
+      return (v === undefined || v === null) ? '--' : v;
+    }
+
+    // A4: 生成"优先原因"文案：与其它同样异常的节点比较持续时长与累计次数
+    function buildPriorityReason(nodeId) {
+      const node = nodeState[nodeId];
+      const now = new Date();
+      const myDurationSec = Math.max(0, (now - node.abnormalSince) / 1000);
+
+      // 找出除自己以外、当前也处于异常的节点中持续最久的那个作为对比对象
+      let rivalId = null;
+      let rivalDurationSec = -1;
+      let rivalCount = 0;
+      for (const [id, state] of Object.entries(nodeState)) {
+        if (id === nodeId) continue;
+        if (!state.abnormalSince) continue;
+        if (state.status === '正常' || state.status === '等待数据') continue;
+        const durationSec = Math.max(0, (now - state.abnormalSince) / 1000);
+        if (durationSec > rivalDurationSec) {
+          rivalDurationSec = durationSec;
+          rivalCount = state.abnormalCount;
+          rivalId = id;
+        }
+      }
+
+      if (!rivalId) return '当前唯一处于异常的节点';
+
+      const parts = [];
+      if (myDurationSec - rivalDurationSec > 1) parts.push(`异常持续时间长于 ${rivalId}`);
+      else parts.push(`异常持续时间与 ${rivalId} 接近`);
+      if (node.abnormalCount > rivalCount) parts.push('且次数更多');
+      return parts.join('，');
+    }
+
+    // MQTT 客户端（提升到全局，供 handleAction 发布指令）
+    let client = null;
+
+    // ================== 2. 更新节点状态（A1 核心）==================
+    function updateNodeState(nodeId, status, timeStr) {
+      const node = nodeState[nodeId];
+      if (!node) return;
+      const isAbnormal = status !== '正常';
+      const currentTime = new Date(timeStr.replace(' ', 'T'));
+
+      if (isAbnormal) {
+        if (node.status === '正常' || node.status === '等待数据') {
+          node.abnormalSince = currentTime;
+          node.abnormalCount = 0;
+        }
+        node.abnormalCount += 1;
+      } else {
+        node.abnormalSince = null;
+        node.abnormalCount = 0;
+      }
+      node.status = status;
+    }
+
+    // ================== 3. A2: 点击处理按钮 ==================
+    // 状态与处理动作的对应关系：偏热开风扇、偏湿开通风，偏冷 / 正常不需要处理
+    function getActionByStatus(status) {
+      if (status === '偏热') return { name: '开启风扇' };
+      if (status === '偏湿') return { name: '开启通风' };
+      return null;
+    }
+
+    function handleAction(nodeId) {
+      if (processingState[nodeId]) return;
+
+      // 动作名由点击时的状态决定，避免按钮被绕过时记错动作
+      const action = getActionByStatus(nodeState[nodeId].status);
+      if (!action) return;
+
+      const actionAt = new Date();
+      const now = actionAt.toLocaleTimeString('zh-CN', { hour12: false });
+      processingState[nodeId] = {
+        time: now,
+        action: action.name,
+        dataAfterAction: 0,
+        restored: false
+      };
+
+      // A4: 记录完整事件信息（恢复时间与最终结果在收到恢复数据后回填）
+      const node = nodeState[nodeId];
+      const reading = latestReading[nodeId] || {};
+      eventLogs.push({
+        nodeId: nodeId,
+        startTime: formatDateTime(actionAt),
+        status: node.status,
+        temperature: reading.temperature,
+        humidity: reading.humidity,
+        abnormalCount: node.abnormalCount,
+        priorityReason: buildPriorityReason(nodeId),
+        action: action.name,
+        actionTime: now,
+        restoreTime: null,
+        result: '处理中'
+      });
+
+      // 先刷新本地界面，再发 MQTT 指令：即使未连接，状态与日志也不受影响
+      updatePriority();
+
+      if (client && client.connected) {
+        client.publish(`dormmate/${nodeId}/action`, JSON.stringify({ nodeId, action: 'turn_on_fan' }));
+      } else {
+        console.warn('MQTT 未连接，指令未发送:', nodeId);
+      }
+    }
+
+    // ================== 4. A1/B1/B2/A4: 计算优先关注、总览和复盘 ==================
+    function updatePriority() {
+      let priorityNodeId = null;
+      let maxDurationSec = -0.1;
+      let maxCount = -1;
+      const now = new Date();
+
+      // 遍历节点，比较异常持续时间和次数
+      for (const [nodeId, node] of Object.entries(nodeState)) {
+        if (node.status !== '正常' && node.status !== '等待数据' && node.abnormalSince) {
+          const durationSec = Math.max(0, (now - node.abnormalSince) / 1000);
+          if (durationSec > maxDurationSec) {
+            maxDurationSec = durationSec;
+            maxCount = node.abnormalCount;
+            priorityNodeId = nodeId;
+          } else if (Math.abs(durationSec - maxDurationSec) < 1) {
+            if (node.abnormalCount > maxCount) {
+              maxCount = node.abnormalCount;
+              priorityNodeId = nodeId;
+            }
+          }
+        }
+      }
+
+      // B1: 生成当前总览
+      let normalCount = 0;
+      let abnormalNodes = [];
+      for (const [nodeId, node] of Object.entries(nodeState)) {
+        if (node.status === '正常') normalCount++;
+        if (node.status !== '正常' && node.status !== '等待数据') abnormalNodes.push(nodeId);
+      }
+      const overviewEl = document.getElementById('overviewBanner');
+      if (abnormalNodes.length > 0) {
+        overviewEl.textContent = `当前 3 个宿舍中，${normalCount} 个正常，${abnormalNodes.length} 个需要关注；${priorityNodeId} 当前最值得优先处理。`;
+      } else {
+        overviewEl.textContent = '当前 3 个宿舍状态全部正常。';
+      }
+
+      // B2: 更新优先关注横幅
+      const banner = document.getElementById('priorityBanner');
+      if (priorityNodeId) {
+        const minutes = Math.floor(maxDurationSec / 60);
+        const displayMinutes = minutes < 1 ? '不到 1' : minutes;
+        banner.innerHTML = `⚠️ 优先关注 ${priorityNodeId}：已持续异常 ${displayMinutes} 分钟，累计 ${maxCount} 次。`;
+        banner.style.display = 'block';
+      } else {
+        banner.style.display = 'none';
+      }
+
+      // 更新卡片 UI（按钮、处理状态、高亮）
+      nodes.forEach(id => {
+        const card = document.getElementById(`card-${id}`);
+        const actionBtn = card.querySelector('.action-btn');
+        const processStatus = card.querySelector('.process-status');
+        const state = processingState[id];
+
+        // 高亮
+        if (id === priorityNodeId && !state) card.classList.add('priority');
+        else card.classList.remove('priority');
+
+        // 按钮显示：只有「偏热 / 偏湿」才需要处理，偏冷 / 正常不显示按钮
+        const action = getActionByStatus(nodeState[id].status);
+        if (id === priorityNodeId && !state && action) {
+          if (actionBtn) {
+            actionBtn.textContent = action.name; // 偏热→开启风扇，偏湿→开启通风
+            actionBtn.style.display = 'inline-block';
+          }
+        } else {
+          if (actionBtn) actionBtn.style.display = 'none';
         }
 
-        // 更新趋势图（简单示例：把最新数据加在末尾，保留最近 10 条）
-        const timeLabel = data.time.substring(11, 16); // 只取时分
-        if (chart.data.labels.length > 10) {
-          chart.data.labels.shift();
-          chart.data.datasets.forEach(d => d.data.shift());
+        // 状态文字
+        if (state) {
+          if (processStatus) {
+            processStatus.style.display = 'block';
+            if (state.restored) {
+              processStatus.textContent = `✅ 已恢复 (${state.restoreTime})`;
+              processStatus.style.color = '#16a34a';
+            } else {
+              processStatus.textContent = `处理中 | ${state.action} 已开启 (${state.time})`;
+              processStatus.style.color = '#d97706';
+            }
+          }
+        } else {
+          if (processStatus) processStatus.style.display = 'none';
         }
+      });
+
+      // A4: 刷新事件列表（每条记录展示完整事件信息）
+      const logList = document.getElementById('eventLogList');
+      if (eventLogs.length > 0) {
+        logList.innerHTML = eventLogs.map(log => {
+          const lines = [
+            `开始时间：${log.startTime}`,
+            `问题：持续${log.status}（${fmtValue(log.temperature)}℃ / ${fmtValue(log.humidity)}%），累计异常 ${log.abnormalCount} 次`,
+            `优先原因：${log.priorityReason}`,
+            `处理动作：${log.action}（${log.actionTime}）`,
+            log.restoreTime
+              ? `恢复时间：${log.restoreTime}（连续收到 2 条正常数据后判定）`
+              : '恢复时间：等待恢复数据中',
+            `最终结果：${log.result}`
+          ];
+          const cls = log.result === '已恢复' ? 'event-item is-restored' : 'event-item';
+          return `<li class="${cls}">` +
+                 `<div class="event-title">[事件复盘 | ${log.nodeId}]</div>` +
+                 lines.map(line => `<div class="event-line">${line}</div>`).join('') +
+                 `</li>`;
+        }).join('');
+      }
+    }
+
+    // ================== 5. M5: 更新图表 ==================
+    let chart;
+    function initChart() {
+      const ctx = document.getElementById('trendChart').getContext('2d');
+      chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: [],
+          datasets: [
+            { label: 'dorm-a 温度', data: [], borderColor: '#2563eb', fill: false, tension: 0.1 },
+            { label: 'dorm-b 温度', data: [], borderColor: '#16a34a', fill: false, tension: 0.1 },
+            { label: 'dorm-c 温度', data: [], borderColor: '#d97706', fill: false, tension: 0.1 }
+          ]
+        },
+        options: { responsive: true, animation: false }
+      });
+    }
+
+    function updateUI(data) {
+      const nodeId = data.nodeId;
+      const card = document.getElementById(`card-${nodeId}`);
+      if (card) {
+        card.querySelector('.value').textContent = `当前：${data.temperature}℃ / ${data.humidity}%`;
+        const statusEl = card.querySelector('.status');
+        statusEl.textContent = data.status;
+        statusEl.className = `status ${data.status}`;
+      }
+
+      const timeLabel = data.time.substring(11, 16);
+      if (chart.data.labels.length > 15) {
+        chart.data.labels.shift();
+        chart.data.datasets.forEach(d => d.data.shift());
+      }
+      if (chart.data.labels[chart.data.labels.length - 1] !== timeLabel) {
         chart.data.labels.push(timeLabel);
-        
-        // 根据 nodeId 更新对应的数据集
         chart.data.datasets.forEach(dataset => {
           if (dataset.label.includes(nodeId)) {
             dataset.data.push(data.temperature);
           } else {
-            // 如果这次没收到该节点的数据，为了图表对齐，补一个 null 或者上一个值
             dataset.data.push(dataset.data[dataset.data.length - 1] || null);
           }
         });
         chart.update();
-
-      } catch (e) {
-        console.error('消息解析错误:', e);
       }
-    });
+    }
+
+    // ================== 6. M5 + A3 + A4: MQTT 连接与消息处理 ==================
+    function initMQTT() {
+      client = mqtt.connect('ws://127.0.0.1:8083');
+      
+      client.on('connect', () => {
+        console.log('Dashboard 已连接到本机 MQTT Broker');
+        client.subscribe('dormmate/+/env');
+      });
+
+      client.on('message', (topic, message) => {
+        try {
+          const data = JSON.parse(message.toString());
+          const nodeId = data.nodeId;
+          
+          // 1. 更新节点状态（并记录最近一次上报值，供 A4 复盘引用）
+          latestReading[nodeId] = { temperature: data.temperature, humidity: data.humidity };
+          updateNodeState(nodeId, data.status, data.time);
+          
+          // 2. 更新卡片与图表
+          updateUI(data);
+          
+          // 3. A3: 验证恢复逻辑
+          if (processingState[nodeId]) {
+            processingState[nodeId].dataAfterAction += 1;
+            if (processingState[nodeId].dataAfterAction >= 2 && data.status === '正常') {
+              const restoreAt = new Date();
+              const restoreTime = restoreAt.toLocaleTimeString('zh-CN', { hour12: false });
+              processingState[nodeId].restored = true;
+              processingState[nodeId].restoreTime = restoreTime;
+              
+              // A4: 回填该节点最近一条未结束的事件记录
+              for (let i = eventLogs.length - 1; i >= 0; i--) {
+                const log = eventLogs[i];
+                if (log.nodeId !== nodeId || log.result !== '处理中') continue;
+                log.restoreTime = formatDateTime(restoreAt);
+                log.result = '已恢复';
+                break;
+              }
+            }
+          }
+          
+          // 4. 重新计算优先关注（并刷新所有 UI，包括 A4 事件列表）
+          updatePriority();
+
+        } catch (e) {
+          console.error('消息解析错误:', e);
+        }
+      });
+    }
+
+    // ================== 7. 初始化 ==================
+    initChart();
+    initMQTT();
   </script>
 </body>
 </html>
