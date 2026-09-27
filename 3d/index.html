@@ -20,13 +20,16 @@
   </style>
 </head>
 <body>
-  <div id="info">
-    <h2>DormMate 3D 宿舍 (<span id="currentNode">dorm-a</span>)</h2>
-    <div>当前状态：<span class="status" id="statusText">等待 MQTT 数据...</span></div>
-    <div style="margin-top: 10px; display: flex; gap: 8px;">
-      <button onclick="switchNode('dorm-a')" id="btn-dorm-a" style="padding:4px 12px; border:1px solid #cbd5e1; border-radius:6px; background:#2563eb; color:white; cursor:pointer;">dorm-a</button>
-      <button onclick="switchNode('dorm-b')" id="btn-dorm-b" style="padding:4px 12px; border:1px solid #cbd5e1; border-radius:6px; background:white; color:#1e293b; cursor:pointer;">dorm-b</button>
-      <button onclick="switchNode('dorm-c')" id="btn-dorm-c" style="padding:4px 12px; border:1px solid #cbd5e1; border-radius:6px; background:white; color:#1e293b; cursor:pointer;">dorm-c</button>
+ <div id="info">
+  <h2>DormMate 3D 宿舍</h2>
+  <div>当前节点：<span id="currentNode" style="color:#2563eb;font-weight:bold;">dorm-a</span></div>
+  <div>当前状态：<span class="status" id="statusText">等待数据...</span></div>
+  <div style="margin-top: 10px; display: flex; gap: 8px;">
+    <button onclick="switchNode('dorm-a')" id="btn-dorm-a" style="padding:4px 12px; border:1px solid #cbd5e1; border-radius:6px; background:#2563eb; color:white; cursor:pointer;">dorm-a</button>
+    <button onclick="switchNode('dorm-b')" id="btn-dorm-b" style="padding:4px 12px; border:1px solid #cbd5e1; border-radius:6px; background:white; color:#1e293b; cursor:pointer;">dorm-b</button>
+    <button onclick="switchNode('dorm-c')" id="btn-dorm-c" style="padding:4px 12px; border:1px solid #cbd5e1; border-radius:6px; background:white; color:#1e293b; cursor:pointer;">dorm-c</button>
+  </div>
+  <div id="actionTip" style="color:#d97706; font-size:14px; margin-top:5px;">
     </div>
   </div>
 
@@ -38,17 +41,23 @@
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0xf3f6fb);
     const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-    camera.position.set(4, 4, 8);
-    camera.lookAt(0, 0.5, 0);
+    camera.position.set(4.5, 4,6.5);
+    camera.lookAt(0, 0.8, 0);
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     document.body.appendChild(renderer.domElement);
 
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+    // 三盏灯的强度之和必须控制在 1.0 附近：three.js 里 1.0 就是满亮度，
+    // 超过 1.0 后材质颜色的各个通道会被裁到 1，地板/窗户就会变成纯白，看不出状态色
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
     scene.add(ambientLight);
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
     directionalLight.position.set(5, 10, 7);
     scene.add(directionalLight);
+    // 暖色台灯光：只做氛围点缀，强度过大会把整个场景洗白
+    const warmLight = new THREE.PointLight(0xffaa55, 0.2);
+    warmLight.position.set(2, 3, 2);
+    scene.add(warmLight);
 
     // ================= 2. 创建 3D 对象 =================
     const floorGeometry = new THREE.BoxGeometry(8, 0.2, 8);
@@ -105,18 +114,70 @@
     glass.position.z = 0.1;
     windowGroup.add(glass);
     scene.add(windowGroup);
+    // ================= 新增：宿舍床铺 =================
+const bedGroup = new THREE.Group();
+bedGroup.position.set(-2, 0, 1); // 放在风扇左侧
+
+const bedFrameGeo = new THREE.BoxGeometry(2.2, 0.3, 3.5);
+const bedFrameMat = new THREE.MeshStandardMaterial({ color: 0x64748b });
+const bedFrame = new THREE.Mesh(bedFrameGeo, bedFrameMat);
+bedFrame.position.y = 0.3;
+bedGroup.add(bedFrame);
+
+const mattressGeo = new THREE.BoxGeometry(2.0, 0.3, 3.3);
+const mattressMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc });
+const mattress = new THREE.Mesh(mattressGeo, mattressMat);
+mattress.position.y = 0.6;
+bedGroup.add(mattress);
+
+const pillowGeo = new THREE.BoxGeometry(1.6, 0.2, 0.6);
+const pillowMat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1 });
+const pillow = new THREE.Mesh(pillowGeo, pillowMat);
+pillow.position.set(0, 0.8, -1.2);
+bedGroup.add(pillow);
+
+scene.add(bedGroup);
+
+// ================= 新增：暖色台灯 =================
+const lampGroup = new THREE.Group();
+lampGroup.position.set(2.5, 0, 1);
+
+const lampBaseGeo = new THREE.CylinderGeometry(0.3, 0.3, 0.1, 16);
+const lampBaseMat = new THREE.MeshStandardMaterial({ color: 0x475569 });
+const lampBase = new THREE.Mesh(lampBaseGeo, lampBaseMat);
+lampGroup.add(lampBase);
+
+const lampPoleGeo = new THREE.CylinderGeometry(0.05, 0.05, 1.2, 8);
+const lampPoleMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8 });
+const lampPole = new THREE.Mesh(lampPoleGeo, lampPoleMat);
+lampPole.position.y = 0.6;
+lampGroup.add(lampPole);
+
+const lampShadeGeo = new THREE.ConeGeometry(0.4, 0.5, 16);
+const lampShadeMat = new THREE.MeshStandardMaterial({ color: 0xfcd34d });
+const lampShade = new THREE.Mesh(lampShadeGeo, lampShadeMat);
+lampShade.position.y = 1.3;
+lampGroup.add(lampShade);
+
+scene.add(lampGroup);
 
     // ================= 3. 状态映射与更新逻辑 =================
     let fanSpeed = 0;
 
     function updateScene(status) {
-      document.getElementById('statusText').textContent = status;
+      const statusLabel = document.getElementById('statusText');
+      statusLabel.textContent = status;
+      // 类名与上方 <style> 里的 .status.偏热 等规则对应，状态文字才有颜色
+      statusLabel.className = `status ${status}`;
       switch (status) {
         case '正常': fanSpeed = 0.02; floorMaterial.color.set(0xcbd5e1); glassMaterial.color.set(0x38bdf8); break;
         case '偏热': fanSpeed = 0.4; floorMaterial.color.set(0xfca5a5); glassMaterial.color.set(0xef4444); break;
         case '偏冷': fanSpeed = 0; floorMaterial.color.set(0x93c5fd); glassMaterial.color.set(0x3b82f6); break;
         case '偏湿': fanSpeed = 0.15; floorMaterial.color.set(0xfcd34d); glassMaterial.color.set(0xd97706); break;
       }
+      // 窗户自发光跟着状态色走：原来固定写死蓝色 emissive，
+      // 它会直接叠加在玻璃上，把偏热/偏湿的窗户也冲成白色
+      glassMaterial.emissive.copy(glassMaterial.color).multiplyScalar(0.35);
       floorMaterial.needsUpdate = true;
       glassMaterial.needsUpdate = true;
     }
@@ -133,9 +194,21 @@
     let currentNodeId = 'dorm-a';
     const latestData = {};
 
+    // 动作提示：收到处理指令时在面板上给出可见反馈，5 秒后自动消失
+    let actionTipTimer = null;
+    function showActionTip(text) {
+      const tip = document.getElementById('actionTip');
+      tip.textContent = text;
+      clearTimeout(actionTipTimer);
+      actionTipTimer = setTimeout(() => { tip.textContent = ''; }, 5000);
+    }
+
     function switchNode(nodeId) {
       currentNodeId = nodeId;
       document.getElementById('currentNode').textContent = nodeId;
+      // 上一个宿舍的动作提示不能留在面板上，避免误读成当前宿舍的
+      clearTimeout(actionTipTimer);
+      document.getElementById('actionTip').textContent = '';
       ['dorm-a', 'dorm-b', 'dorm-c'].forEach(id => {
         const btn = document.getElementById(`btn-${id}`);
         if (id === nodeId) {
@@ -171,6 +244,7 @@
         if (data.action === 'turn_on_fan') {
           if (data.nodeId === currentNodeId) {
             fanSpeed = 0.4;
+            showActionTip(`已收到 ${data.nodeId} 的指令：开启风扇`);
             console.log(`收到 ${data.nodeId} 开启风扇指令，3D 风扇启动！`);
           }
         }

@@ -107,8 +107,9 @@ h1 {
   background: #f8fafc;
 }
 
+/* 只保留字重：字号交给下方的 .status-block 控制，
+   否则 ID 选择器优先级更高，会把 .status-block 的 22px 盖回 20px */
 #statusText {
-  font-size: 20px;
   font-weight: 700;
 }
 
@@ -173,3 +174,24 @@ h1 {
 #ttsBtn:hover {
   background: #334155;
 }
+
+/* 输入框获得焦点时，显示淡蓝色光圈 */
+.input-area input:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.15);
+}
+
+/* 状态标签块，让状态展示更突出 */
+.result-area .status-block {
+  display: inline-block;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 22px;
+  font-weight: bold;
+  margin-bottom: 10px;
+}
+.status-block.偏热 { background: #fee2e2; color: #dc2626; }
+.status-block.偏冷 { background: #dbeafe; color: #2563eb; }
+.status-block.偏湿 { background: #fef3c7; color: #d97706; }
+.status-block.正常 { background: #dcfce7; color: #16a34a; }

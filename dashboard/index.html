@@ -25,6 +25,7 @@
 
     .cards { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; margin-bottom: 20px; }
     .card { background: white; padding: 20px; border-radius: 12px; width: 200px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); text-align: center; transition: all 0.3s; }
+    .card:hover { transform: translateY(-4px); box-shadow: 0 8px 20px rgba(0,0,0,0.15); }
     .card h3 { margin: 0 0 10px 0; color: #333; }
     .card .value { font-size: 14px; color: #666; margin-bottom: 6px; }
     .card .status { font-size: 20px; font-weight: bold; }
@@ -51,6 +52,16 @@
     #eventLogList .event-item.is-restored { border-left-color: #16a34a; }
     #eventLogList .event-title { font-weight: bold; color: #1e293b; margin-bottom: 4px; }
     #eventLogList .event-line { font-size: 14px; }
+
+    /* 优先关注的卡片呼吸效果 */
+    @keyframes breathing {
+    0% { box-shadow: 0 0 10px rgba(217, 119, 6, 0.4); }
+    50% { box-shadow: 0 0 25px rgba(217, 119, 6, 0.8); }
+    100% { box-shadow: 0 0 10px rgba(217, 119, 6, 0.4); }
+    }
+    .card.priority {
+      animation: breathing 2s infinite;
+    }
   </style>
 </head>
 <body>

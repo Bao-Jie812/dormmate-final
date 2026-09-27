@@ -44,6 +44,19 @@ function getAdvice(status) {
   }
 }
 
+// 状态标签配色：类名必须与 style.css 里的 .status-block.偏热 等规则一一对应
+const STATUS_CLASSES = ['正常', '偏热', '偏冷', '偏湿'];
+
+// 统一更新状态文字 + 配色：每次先摘掉上一次的状态类，
+// 否则「偏热」和「偏冷」会同时挂在元素上，颜色由 CSS 顺序决定，看起来就像没变色
+function setStatusText(text, status) {
+  statusText.textContent = text;
+  statusText.classList.remove(...STATUS_CLASSES);
+  if (status) {
+    statusText.classList.add(status);
+  }
+}
+
 function formatTime(date) {
   const pad = (n) => String(n).padStart(2, '0');
   const year = date.getFullYear();
@@ -100,7 +113,7 @@ analyzeBtn.addEventListener('click', () => {
   const errorMessage = validateInput(rawTemperature, rawHumidity);
 
   if (errorMessage) {
-    statusText.textContent = '输入有误';
+    setStatusText('输入有误', null);
     statusText.classList.add('error');
     adviceText.textContent = errorMessage;
     return;
@@ -116,7 +129,7 @@ analyzeBtn.addEventListener('click', () => {
   const advice = getAdvice(status);
   const time = formatTime(new Date());
 
-  statusText.textContent = `当前状态：${status}`;
+  setStatusText(`当前状态：${status}`, status);
   adviceText.textContent = `建议：${advice}`;
 
   // 历史追加：把本次结果加入数组并重新渲染
@@ -289,7 +302,7 @@ function renderSelectedNode() {
     // 还没收到过这个宿舍的数据：清空输入框，避免显示上一个宿舍的残留
     temperatureInput.value = '';
     humidityInput.value = '';
-    statusText.textContent = '等待数据';
+    setStatusText('等待数据', null);
     adviceText.textContent = `尚未收到 ${selectedNodeId} 的数据，也可以手动输入温湿度后点击“分析环境”。`;
     renderHistory();
     return;
@@ -297,7 +310,7 @@ function renderSelectedNode() {
 
   temperatureInput.value = data.temperature;
   humidityInput.value = data.humidity;
-  statusText.textContent = `当前状态：${data.status}`;
+  setStatusText(`当前状态：${data.status}`, data.status);
   adviceText.textContent = `建议：${getAdvice(data.status)}`;
   renderHistory();
 }
