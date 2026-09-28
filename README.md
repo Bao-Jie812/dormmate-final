@@ -1,38 +1,44 @@
 # DormMate Final - 多节点宿舍环境助手
 
-这是低年级综合挑战（C01）的最终项目。
+低年级综合挑战（C01）最终项目：一套围绕“宿舍环境”的多端系统。
 
-## 项目简介
-一个围绕“宿舍环境”的多端系统，包含 Web 主应用、Python 离线分析、微信小程序、MQTT 实时 Dashboard 和 3D 宿舍视图。
+**统一规则**：Web、小程序、Dashboard、离线分析共用同一套判定 —— 温度 < 18℃ 判「偏冷」，温度 ≥ 30℃ 判「偏热」，湿度 ≥ 75% 判「偏湿」，其余为「正常」。
 
-## 如何运行
-- **M1 Web 主应用**：用 Live Server 打开 `web/index.html`。
-- **M2 离线分析**：把 CSV 放入 `data`，终端运行 `python analysis.py`。
-- **M4 移动端**：用微信开发者工具打开 `miniapp` 目录。
-- **M5 实时 Dashboard**：启动本机 MQTT Broker，用 MQTTX 发送 JSON，用 Live Server 打开 `dashboard/index.html`。
+## 模块一览（M1-M6）
 
-## 已知限制与排错记录
-- **M5 排错记录**：在测试时，曾将 Topic 误写为 `dormmate/dorm-c/wrong`，导致 Dashboard 不再更新。定位原因为 Topic 不匹配，改回 `dormmate/dorm-c/env` 后恢复实时刷新。
+| 模块 | 核心功能 | 运行方式 |
+| --- | --- | --- |
+| **M1** Web 主应用 | 手动录入温湿度，按统一规则判定状态，留存历史记录并导出 CSV | Live Server 打开 `web/index.html` |
+| **M2** 离线分析 | 用 pandas 分析 `data/` 下的历史 CSV（由 M1 导出），生成状态统计与趋势图 | 在 `analysis/` 下运行 `python analysis.py` |
+| **M3** 本机交互 | 调用摄像头拍摄现场快照，支持语音识别下发指令、语音朗读当前状态 | 与 M1 同一页面，点对应按钮 |
+| **M4** 移动端 | 微信小程序，复用与 Web 完全一致的业务规则，支持多宿舍切换 | 微信开发者工具打开 `miniapp` |
+| **M5** 实时 Dashboard | 经 MQTT 订阅各宿舍数据，实时刷新卡片、趋势图与异常统计 | 先起本机 Broker，再打开 `dashboard/index.html` |
+| **M6** 3D 数字空间 | Three.js 3D 宿舍，地板/窗户颜色与风扇转速随 MQTT 状态实时变化 | Live Server 打开 `3d/index.html` |
 
-## 开源组件来源
-- Chart.js
-- MQTT.js
-- Three.js
-- pandas / matplotlib
+**实时链路**：各端统一连接本机 Broker（WebSocket `8083`），发布到 `dormmate/<节点>/env`，Web、小程序、Dashboard、3D 场景同步刷新；处理动作走 `dormmate/<节点>/action`。
 
-## M6 自主小改进与真实 Bug 记录
+## 高阶模块（A / B / C）
 
-### 自主小改进：风扇转速随温度变化
-- **问题**：3D 场景如果所有状态风扇转速一样，看不出温度差异。
-- **最小改动**：在 `updateScene(status)` 里，根据状态设置不同的 `fanSpeed`：
-  - 偏热：`fanSpeed = 0.4`（快速转）
-  - 正常：`fanSpeed = 0.02`（慢速转）
-  - 偏冷：`fanSpeed = 0`（停止）
-  - 偏湿：`fanSpeed = 0.15`（中速转）
-- **验证**：用 MQTTX 发 31℃、25℃、16℃ 三组数据，风扇分别表现为快速转、慢速转、停止，与预期一致。
+- **A. 问题处理闭环**：优先关注（按异常持续时长与累计次数算出最该先看的宿舍）→ 处理动作（Dashboard 点击记录干预）→ 数据验证恢复（连续 2 条正常数据才判定恢复，避免假性恢复）→ 事件复盘（整条链路自动留痕）。
+- **B. 信息提炼与总览**：自动汇总“X 个正常、Y 个需要关注”并解释优先原因；Dashboard 看当前重点、3D 看空间状态、TTS 听语音提醒、`report.html` 看历史复盘，四个入口各司其职。
+- **C. 轻量 ML 异常检测**：用历史 CSV 训练 IsolationForest（temperature + humidity），与固定规则并排比对；保留“规则判正常、ML 判异常”的真实案例，并自动解释差异来自方法定位不同（绝对阈值 vs 相对离群度），而非模型出错。
 
-### 真实 Bug 与修复
-- **现象**：第一次测试时，MQTTX 发消息后 3D 场景不响应，左上角状态一直是“等待数据”。
-- **定位**：打开浏览器控制台（F12），发现订阅 Topic 写成了 `dormmate/dorm-a`，而 MQTTX 实际发送的 Topic 是 `dormmate/dorm-a/env`。
-- **修复**：把 `client.subscribe('dormmate/dorm-a')` 改为 `client.subscribe('dormmate/dorm-a/env')`，保存后刷新页面，3D 成功实时响应 MQTT 数据。
-- **验证**：重新发送三种状态的 JSON，3D 场景均能正常变色、变速。
+## 自主小改进与真实 Bug 记录
+
+- **小改进**：3D 风扇转速随状态变化（偏热 0.4 / 偏湿 0.15 / 正常 0.02 / 偏冷 0），一眼看出温度差异。
+- **M6 Bug**：3D 页订阅漏写 `/env`（写成 `dormmate/dorm-a`），场景一直停在“等待数据”；对照 MQTTX 的 Topic 改正后恢复实时响应。
+- **M5 Bug**：Topic 误写成 `dormmate/dorm-c/wrong`，Dashboard 不再更新；改回 `dormmate/dorm-c/env` 后恢复刷新。
+
+## AI 协作开发复盘
+
+本项目用 Claude Code 辅助开发，主要用在三处：
+
+- **代码生成**：描述需求后生成基础业务逻辑与 UI 框架。
+- **排错与修复**：把浏览器控制台的报错直接交给 AI 定位修复（如 3D 材质被过强光照洗白、小程序按钮排布异常、MQTT 断连重试）。
+- **逻辑梳理**：协助梳理 A/B/C 的优先级计算与恢复验证逻辑，以及 UI 动画与状态标签。
+
+人的角色更接近“产品经理 + 测试工程师”：定义规则、验证结果、发现异常；AI 承担具体实现。
+
+## 开源组件
+
+Chart.js · MQTT.js · Three.js · pandas / matplotlib / scikit-learn
