@@ -1,7 +1,22 @@
+/* 页面浅色背景：与 Web 端 body 的 #f3f6fb 保持一致 */
+page {
+  background-color: #f3f6fb;
+}
+
 .container {
   padding: 40rpx;
   display: flex;
   flex-direction: column;
+  /* 以下三条必须显式覆盖 app.wxss 里的全局 .container。
+     app.wxss 写的是 align-items:center / justify-content:space-between / height:100%，
+     两个 .container 特异性相同(0,1,0)，页面样式只覆盖"声明过的属性"——漏掉哪条哪条就继续生效：
+     · align-items:center 会把每个子块压成内容宽度，按钮行只占约 380rpx（可用 670rpx），
+       看起来就是三坨挤在一起；
+     · justify-content + height 会把各区块拉开到整屏高度。 */
+  align-items: stretch;
+  justify-content: flex-start;
+  height: auto;
+  box-sizing: border-box;
 }
 
 .title {
@@ -41,15 +56,14 @@
 /* 每个按钮平分宽度。
    注意：小程序原生 button 自带 padding 0 14px、margin auto、背景 #f8f8f8、
    圆角 5px、line-height 2.55 和 ::after 灰边框，全部要在这一条里覆盖掉。
-   不要再单独写一条 .node-buttons button 去做重置——那条特异性(0,1,1)比这条的
-   (0,1,0)更高，会反过来把这里的 background / border-radius / margin 全压掉，
-   按钮就会变成没底色没间距的三坨文字，看起来"分布不均衡" */
+   这条选择器是两个类，特异性 (0,2,0)，高于 .node-buttons button 的 (0,1,1)，
+   所以原生默认样式集中写在这里就能压住，不需要另写 reset 规则。 */
 .node-buttons .switch-label {
   flex: 1;
   min-width: 0;
   box-sizing: border-box;
   text-align: center;
-  font-size: 24rpx;
+  font-size: 26rpx;
   line-height: 1.6;
   padding: 12rpx 0;
   margin: 0 4rpx;
@@ -57,6 +71,7 @@
   color: #334155;
   border: none;
   border-radius: 8rpx;
+  white-space: nowrap;
 }
 
 .node-buttons .switch-label::after {
@@ -83,6 +98,9 @@
 }
 
 .input-group input {
+  width: 100%;
+  height: 88rpx;
+  box-sizing: border-box;
   border: 1px solid #cbd5e1;
   border-radius: 10rpx;
   padding: 20rpx;
@@ -91,11 +109,22 @@
 
 /* 分析按钮 */
 .analyze-btn {
+  /* 原生 button 自带 margin auto，而跨轴上有 auto margin 的 flex item 会取消
+     align-items:stretch，所以宽度必须显式写死，否则按钮还是"文字宽的小胶囊 + 居中" */
+  width: 100%;
+  margin: 0 0 40rpx 0;
+  padding: 22rpx 0;
+  line-height: 1.4;
   background-color: #2563eb;
   color: white;
   border-radius: 10rpx;
-  margin-bottom: 40rpx;
   font-size: 30rpx;
+  font-weight: 700;
+}
+
+/* 去掉原生 button 的 ::after 灰边框 */
+.analyze-btn::after {
+  border: none;
 }
 
 /* 结果显示区域 */
@@ -113,9 +142,27 @@
   color: #333;
 }
 
-/* MQTT 状态提示文字 */
+/* 状态标签：配色与 web/style.css 的 .status-block.偏热 等规则一一对应。
+   必须写 align-self，因为 .result 是 column flex，默认 stretch 会把它拉成通栏色条 */
+.result .status-tag {
+  align-self: flex-start;
+  display: inline-block;
+  padding: 10rpx 24rpx;
+  border-radius: 8rpx;
+  font-size: 30rpx;
+  font-weight: bold;
+  margin-bottom: 16rpx;
+}
+
+.result .status-tag.status-hot { background: #fee2e2; color: #dc2626; }
+.result .status-tag.status-cold { background: #dbeafe; color: #2563eb; }
+.result .status-tag.status-humid { background: #fef3c7; color: #d97706; }
+.result .status-tag.status-normal { background: #dcfce7; color: #16a34a; }
+
+/* MQTT 状态提示文字。
+   原来是恒绿 #16a34a，未连接时会出现"绿字写着 MQTT：未连接"，改成中性灰由文案自己表达状态 */
 .mqtt-status {
   font-size: 22rpx;
-  color: #16a34a;
+  color: #64748b;
   margin-top: 10rpx;
 }

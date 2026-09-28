@@ -163,6 +163,24 @@ scene.add(lampGroup);
 
     // ================= 3. 状态映射与更新逻辑 =================
     let fanSpeed = 0;
+    let currentStatus = ''; // 当前生效的状态，提示文案要用
+
+    // 各状态对应的提示语。转速描述必须和下面 switch 里的 fanSpeed 对得上，
+    // 别写出"偏冷风扇还在转"这种和场景矛盾的文案
+    const STATUS_TIPS = {
+      '正常': '提示：环境舒适，风扇低速待机',
+      '偏热': '提示：风扇高速旋转，正在通风降温',
+      '偏冷': '提示：温度偏低，风扇已停转，注意保暖',
+      '偏湿': '提示：湿度偏高，风扇中速运行，正在除湿',
+    };
+
+    // 场景外观复位：切到还没有数据的宿舍时，不能把上一间的颜色和转速留在场上
+    function resetScene() {
+      fanSpeed = 0.02;
+      floorMaterial.color.set(0xcbd5e1);
+      glassMaterial.color.set(0x38bdf8);
+      glassMaterial.emissive.copy(glassMaterial.color).multiplyScalar(0.35);
+    }
 
     function updateScene(status) {
       const statusLabel = document.getElementById('statusText');
@@ -174,15 +192,21 @@ scene.add(lampGroup);
         case '偏热': fanSpeed = 0.4; floorMaterial.color.set(0xfca5a5); glassMaterial.color.set(0xef4444); break;
         case '偏冷': fanSpeed = 0; floorMaterial.color.set(0x93c5fd); glassMaterial.color.set(0x3b82f6); break;
         case '偏湿': fanSpeed = 0.15; floorMaterial.color.set(0xfcd34d); glassMaterial.color.set(0xd97706); break;
+        default: resetScene(); break; // 未知状态：复位，别留着上一间的配色
       }
+      currentStatus = status;
       // 窗户自发光跟着状态色走：原来固定写死蓝色 emissive，
       // 它会直接叠加在玻璃上，把偏热/偏湿的窗户也冲成白色
       glassMaterial.emissive.copy(glassMaterial.color).multiplyScalar(0.35);
       floorMaterial.needsUpdate = true;
       glassMaterial.needsUpdate = true;
+      renderTip();
     }
 
     // ================= 4. 动画循环 =================
+    // 启动时先复位一次：玻璃 emissive 初值 0x0ea5e9 没乘系数，首帧比之后任何状态都亮
+    resetScene();
+
     function animate() {
       requestAnimationFrame(animate);
       bladeGroup.rotation.z += fanSpeed;
@@ -194,21 +218,45 @@ scene.add(lampGroup);
     let currentNodeId = 'dorm-a';
     const latestData = {};
 
-    // 动作提示：收到处理指令时在面板上给出可见反馈，5 秒后自动消失
+    // 提示位：状态提示常驻，收到处理指令时临时占用 5 秒再让位。
+    // 只翻标志位、由 renderTip() 统一决定显示内容——如果把文案字符串存进 setTimeout，
+    // 5 秒内到达的新数据刷新了状态提示后，会被定时器用旧文案盖回去
+    let currentActionTip = '';
+    let actionTipActive = false;
     let actionTipTimer = null;
+
+    // 还没有任何状态时提示位不留空白
+    const WAITING_TIP = '提示：等待 MQTT 数据';
+
+    function renderTip() {
+      document.getElementById('actionTip').textContent =
+        actionTipActive ? currentActionTip : (STATUS_TIPS[currentStatus] || WAITING_TIP);
+    }
+
     function showActionTip(text) {
-      const tip = document.getElementById('actionTip');
-      tip.textContent = text;
+      currentActionTip = text;
+      actionTipActive = true;
+      renderTip();
       clearTimeout(actionTipTimer);
-      actionTipTimer = setTimeout(() => { tip.textContent = ''; }, 5000);
+      actionTipTimer = setTimeout(() => {
+        actionTipActive = false;
+        renderTip();
+      }, 5000);
+    }
+
+    // 清掉未到期的动作提示，立即让位给状态提示
+    function clearActionTip() {
+      clearTimeout(actionTipTimer);
+      actionTipActive = false;
+      currentActionTip = '';
+      renderTip();
     }
 
     function switchNode(nodeId) {
       currentNodeId = nodeId;
       document.getElementById('currentNode').textContent = nodeId;
       // 上一个宿舍的动作提示不能留在面板上，避免误读成当前宿舍的
-      clearTimeout(actionTipTimer);
-      document.getElementById('actionTip').textContent = '';
+      clearActionTip();
       ['dorm-a', 'dorm-b', 'dorm-c'].forEach(id => {
         const btn = document.getElementById(`btn-${id}`);
         if (id === nodeId) {
@@ -222,7 +270,14 @@ scene.add(lampGroup);
       if (latestData[nodeId]) {
         updateScene(latestData[nodeId].status);
       } else {
-        document.getElementById('statusText').textContent = '等待 MQTT 数据...';
+        // 没有数据的宿舍：文字、文字配色、3D 场景三者一起复位，
+        // 否则会出现"文字写着等待数据，地板还是上一间的红色、风扇还在转"
+        currentStatus = '';
+        resetScene();
+        const statusLabel = document.getElementById('statusText');
+        statusLabel.textContent = '等待 MQTT 数据...';
+        statusLabel.className = 'status';
+        renderTip();
       }
     }
 
@@ -258,6 +313,9 @@ scene.add(lampGroup);
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
     });
+
+    // 首屏先把提示位填上等待语，否则左上角会留一块空白
+    renderTip();
   </script>
 </body>
 </html>

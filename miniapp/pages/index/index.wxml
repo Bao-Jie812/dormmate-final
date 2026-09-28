@@ -1,3 +1,12 @@
+<!-- 状态 → 标签配色类名映射。
+     放在视图层是为了不动 index.js：status 在页面里有 7 处 setData 写入，
+     每加一个派生字段就要同步 7 处，漏一处就会出现"文字变了颜色没变"。
+     这里只做纯展示映射，不参与任何判定 -->
+<wxs module="st">
+  var CLS = { '正常': 'status-normal', '偏热': 'status-hot', '偏冷': 'status-cold', '偏湿': 'status-humid' };
+  module.exports.cls = function (s) { return CLS[s] || 'status-unknown'; };
+</wxs>
+
 <view class="container">
   <view class="title">DormMate</view>
   <view class="subtitle">宿舍环境助手·移动端 </view>
@@ -28,7 +37,7 @@
   <button class="analyze-btn" bindtap="analyze">分析环境</button>
 
   <view class="result">
-    <text>当前状态：{{status}}</text>
+    <view class="status-tag {{st.cls(status)}}">当前状态：{{status}}</view>
     <text>建议：{{advice}}</text>
     <text class="mqtt-status">{{mqttStatus}}</text>
   </view>

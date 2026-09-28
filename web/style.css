@@ -93,6 +93,7 @@ h1 {
   font-size: 16px;
   font-weight: 700;
   cursor: pointer;
+  transition: background 0.2s;
 }
 
 .input-area button:hover {
@@ -167,6 +168,7 @@ h1 {
   font-weight: 600;
   cursor: pointer;
   margin-right: 8px;
+  transition: background 0.2s;
 }
 
 #cameraBtn:hover,
@@ -182,7 +184,9 @@ h1 {
   box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.15);
 }
 
-/* 状态标签块，让状态展示更突出 */
+/* 状态标签块，让状态展示更突出。
+   这里只设 background 不设 color：.error 的特异性(0,1,0)低于本规则(0,2,0)，
+   一旦这里写了 color，"输入有误"的红字会被压掉 */
 .result-area .status-block {
   display: inline-block;
   padding: 8px 16px;
@@ -190,6 +194,7 @@ h1 {
   font-size: 22px;
   font-weight: bold;
   margin-bottom: 10px;
+  background: #e2e8f0;
 }
 .status-block.偏热 { background: #fee2e2; color: #dc2626; }
 .status-block.偏冷 { background: #dbeafe; color: #2563eb; }

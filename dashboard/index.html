@@ -29,7 +29,22 @@
     .card h3 { margin: 0 0 10px 0; color: #333; }
     .card .value { font-size: 14px; color: #666; margin-bottom: 6px; }
     .card .status { font-size: 20px; font-weight: bold; }
-    .card.priority { border: 3px solid #d97706; box-shadow: 0 0 15px rgba(217, 119, 6, 0.4); transform: translateY(-2px); }
+    /* 优先关注的卡片：橙色边框 + 呼吸光圈。
+       animation 运行时会盖掉这条静态 box-shadow，两条规则必须写在一起，
+       不要再拆到文件末尾——之前就是拆成两处，容易只改到其中一条 */
+    @keyframes breathing {
+      0% { box-shadow: 0 0 10px rgba(217, 119, 6, 0.4); }
+      50% { box-shadow: 0 0 25px rgba(217, 119, 6, 0.8); }
+      100% { box-shadow: 0 0 10px rgba(217, 119, 6, 0.4); }
+    }
+    .card.priority {
+      border: 3px solid #d97706;
+      box-shadow: 0 0 15px rgba(217, 119, 6, 0.4);
+      transform: translateY(-2px);
+      animation: breathing 2s ease-in-out infinite;
+    }
+    /* 优先卡片也要保留 hover 上浮：同特异性下 .card.priority 的 transform 会压住 .card:hover */
+    .card.priority:hover { transform: translateY(-4px); }
 
     .status.正常 { color: #16a34a; }
     .status.偏热 { color: #dc2626; }
@@ -53,14 +68,46 @@
     #eventLogList .event-title { font-weight: bold; color: #1e293b; margin-bottom: 4px; }
     #eventLogList .event-line { font-size: 14px; }
 
-    /* 优先关注的卡片呼吸效果 */
-    @keyframes breathing {
-    0% { box-shadow: 0 0 10px rgba(217, 119, 6, 0.4); }
-    50% { box-shadow: 0 0 25px rgba(217, 119, 6, 0.8); }
-    100% { box-shadow: 0 0 10px rgba(217, 119, 6, 0.4); }
+    /* 今日摘要：原来是写在 div 上的内联样式，内联优先级最高、媒体查询压不住，
+       所以搬到样式表里，手机端才能统一压缩间距与字号 */
+    #todaySummary {
+      max-width: 800px;
+      margin: 20px auto;
+      padding: 18px;
+      background: #ffffff;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      color: #1e293b;
+      line-height: 1.7;
+      font-size: 15px;
     }
-    .card.priority {
-      animation: breathing 2s infinite;
+
+    /* 手机端紧凑排版：三张卡片改为一卡一行，字号与间距整体收窄 */
+    @media (max-width: 480px) {
+      body { padding: 12px; }
+      h1 { font-size: 20px; margin: 0 0 12px 0; }
+
+      #overviewBanner,
+      #priorityBanner {
+        padding: 10px 12px;
+        margin-bottom: 10px;
+        border-left-width: 4px;
+        font-size: 14px;
+      }
+
+      .cards { gap: 10px; margin-bottom: 12px; }
+      .card { width: 100%; padding: 12px 14px; }
+      .card h3 { font-size: 16px; margin-bottom: 6px; }
+      .card .status { font-size: 18px; }
+
+      .chart-container,
+      .event-log-container { padding: 12px; margin: 12px auto; }
+
+      #todaySummary { padding: 12px; font-size: 14px; line-height: 1.6; }
+
+      #eventLogList { line-height: 1.6; }
+      #eventLogList .event-item { padding: 8px 10px; margin-bottom: 8px; }
+      #eventLogList .event-line { font-size: 13px; }
     }
   </style>
 </head>
@@ -98,11 +145,7 @@
     <canvas id="trendChart"></canvas>
   </div>
 
-  <div id="todaySummary" style="
-  max-width: 800px; margin: 20px auto; padding: 18px;
-  background: #ffffff; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-  color: #1e293b; line-height: 1.7; font-size: 15px;
-">
+  <div id="todaySummary">
   <strong>今日摘要</strong>
   <div id="todaySummaryText" style="margin-top: 8px; color: #475569;">正在汇总...</div>
 </div>
@@ -495,11 +538,13 @@ if (priorityNodeId) {
   let text = `今日共发生 ${eventLogs.length} 次需要关注的环境事件。`;
 
   eventLogs.forEach(e => {
-    text += ` ${e.nodeId} 于 ${e.startTime} 出现${e.problem}，`;
+    // 事件对象里只有 status 字段，没有 problem，写 problem 会渲染成"出现undefined"
+    text += ` ${e.nodeId} 于 ${e.startTime} 出现${e.status}，`;
     if (e.result === '已恢复') {
-      text += `开启风扇处理后于 ${e.restoreTime} 恢复；`;
+      text += `${e.action}处理后于 ${e.restoreTime} 恢复；`;
     } else {
-      text += `已于 ${e.actionTime} 开启风扇处理，仍在等待后续数据验证；`;
+      // 动作可能是"开启风扇"也可能是"开启通风"，跟着事件记录走
+      text += `已于 ${e.actionTime} ${e.action}处理，仍在等待后续数据验证；`;
     }
   });
 
