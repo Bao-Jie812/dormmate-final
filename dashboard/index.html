@@ -251,18 +251,30 @@
       return null;
     }
 
-    function handleAction(nodeId) {
-      if (processingState[nodeId]) return;
+    // 记录一次「开启风扇」处理。本地点按钮、以及从 MQTT 收到的指令（MQTTX 手发、
+    // 别的端转发）都走这一条路径，唯一区别是本地点击还要把指令广播出去。
+    // publish: false 很关键 —— 收到的消息若再转发一次就会形成回环
+    function applyAction(nodeId, options) {
+      const opts = options || {};
+      if (!nodeState[nodeId]) return;
 
-      // 动作名由点击时的状态决定，避免按钮被绕过时记错动作
-      const action = getActionByStatus(nodeState[nodeId].status);
-      if (!action) return;
+      // 正在处理中就不要重复记录；但上一轮已经恢复的，可以再开一轮
+      if (processingState[nodeId] && !processingState[nodeId].restored) return;
+
+      // 动作名优先用指令里带的（偏湿时是"开启通风"）；MQTTX 手发的报文没有这个字段，
+      // 就按该节点当前状态判断，与点击时一致
+      const byStatus = getActionByStatus(nodeState[nodeId].status);
+      const actionName = opts.actionName || (byStatus && byStatus.name);
+      if (!actionName) {
+        console.warn(`收到开启风扇指令，但 ${nodeId} 当前状态是「${nodeState[nodeId].status}」，无需处理，已忽略`);
+        return;
+      }
 
       const actionAt = new Date();
       const now = actionAt.toLocaleTimeString('zh-CN', { hour12: false });
       processingState[nodeId] = {
         time: now,
-        action: action.name,
+        action: actionName,
         dataAfterAction: 0,
         restored: false
       };
@@ -278,7 +290,7 @@
         humidity: reading.humidity,
         abnormalCount: node.abnormalCount,
         priorityReason: buildPriorityReason(nodeId),
-        action: action.name,
+        action: actionName,
         actionTime: now,
         restoreTime: null,
         result: '处理中'
@@ -287,11 +299,18 @@
       // 先刷新本地界面，再发 MQTT 指令：即使未连接，状态与日志也不受影响
       updatePriority();
 
+      if (!opts.publish) return;
       if (client && client.connected) {
-        client.publish(`dormmate/${nodeId}/action`, JSON.stringify({ nodeId, action: 'turn_on_fan' }));
+        // actionName 只给各端做提示文案用（偏湿时按钮是"开启通风"），协议字段 action 保持不变
+        client.publish(`dormmate/${nodeId}/action`, JSON.stringify({ nodeId, action: 'turn_on_fan', actionName: actionName }));
       } else {
         console.warn('MQTT 未连接，指令未发送:', nodeId);
       }
+    }
+
+    // 页面按钮的入口（onclick 调的就是它）
+    function handleAction(nodeId) {
+      applyAction(nodeId, { publish: true });
     }
 
     // ================== 4. A1/B1/B2/A4: 计算优先关注、总览和复盘 ==================
@@ -425,6 +444,10 @@ if (priorityNodeId) {
                  `</li>`;
         }).join('');
       }
+
+      // M6: 把优先关注结果同步给 3D 场景。这里只做发布，上面的判定逻辑一行不动；
+      // nodeId 为 null 表示当前没有需要优先关注的宿舍
+      publishPriority(priorityNodeId, maxDurationSec, maxCount);
     }
 
     // ================== 5. M5: 更新图表 ==================
@@ -479,14 +502,32 @@ if (priorityNodeId) {
       
       client.on('connect', () => {
         console.log('Dashboard 已连接到本机 MQTT Broker');
-        client.subscribe('dormmate/+/env');
+        // 同时订阅 action：MQTTX 手发的开启风扇指令也要能被记录成一次处理
+        client.subscribe(['dormmate/+/env', 'dormmate/+/action']);
+        // 首次连接或断线重连后都补发一次当前优先关注，保证 3D 侧的高亮跟得上；
+        // 还没算过（刚打开页面）就发一条 null，把上一场遗留在 Broker 上的 retain 清掉
+        if (lastPriorityPayload) refreshPriorityHeartbeat();
+        else publishPriority(null, 0, 0);
       });
 
       client.on('message', (topic, message) => {
         try {
           const data = JSON.parse(message.toString());
+
+          // 处理动作走独立主题，必须按 topic 分流：
+          // action 报文里没有 status，若落进下面的 env 分支会被当成"异常数据"记进 nodeState。
+          // 这里收到的可能是 MQTTX 手发的，也可能是别的端转发的，一律按本地点按钮处理，
+          // 但不再转发（否则会形成回环；自己刚发出去的那条也会被 broker 回推到这里，
+          //  此时 applyAction 会因"正在处理中"直接返回，不会重复记录）
+          if (topic.endsWith('/action')) {
+            if (data.action === 'turn_on_fan' && data.nodeId) {
+              applyAction(data.nodeId, { publish: false, actionName: data.actionName });
+            }
+            return;
+          }
+
           const nodeId = data.nodeId;
-          
+
           // 1. 更新节点状态（并记录最近一次上报值，供 A4 复盘引用）
           latestReading[nodeId] = { temperature: data.temperature, humidity: data.humidity };
           updateNodeState(nodeId, data.status, data.time);
@@ -557,6 +598,50 @@ if (priorityNodeId) {
 
   el.textContent = text;
 }
+    // ================== 6.1 M6: 把优先关注结果发布给 3D 场景 ==================
+    // 3D 场景订阅 dormmate/priority 来渲染橙色高亮环。
+    // 该主题是两层，不会命中任何一端的 dormmate/+/env 或 dormmate/+/action 通配符订阅，
+    // 因此 web / 小程序 / 本页面都不会收到它
+    const PRIORITY_TOPIC = 'dormmate/priority';
+    // 心跳间隔与 3D 侧的过期阈值（40 秒）配合：长时间没有新数据时也要让 3D 知道
+    // 高亮依然有效，否则那边会把它判成过期（Dashboard 已关闭）而清掉
+    const PRIORITY_HEARTBEAT_MS = 12000;
+    let lastPriorityPayload = null;
+
+    function publishPriority(nodeId, durationSec, count) {
+      lastPriorityPayload = {
+        nodeId: nodeId || null,
+        durationSec: durationSec > 0 ? Math.floor(durationSec) : 0,
+        count: count > 0 ? count : 0,
+        ts: Date.now(),
+        source: 'dashboard'
+      };
+      if (client && client.connected) {
+        client.publish(PRIORITY_TOPIC, JSON.stringify(lastPriorityPayload), { retain: true });
+      }
+    }
+
+    // 心跳只推进持续时长，不重算优先级、不重渲染 DOM
+    function refreshPriorityHeartbeat() {
+      if (!lastPriorityPayload || !client || !client.connected) return;
+      const elapsedSec = lastPriorityPayload.nodeId
+        ? Math.floor((Date.now() - lastPriorityPayload.ts) / 1000)
+        : 0;
+      lastPriorityPayload = {
+        ...lastPriorityPayload,
+        durationSec: lastPriorityPayload.durationSec + elapsedSec,
+        ts: Date.now()
+      };
+      client.publish(PRIORITY_TOPIC, JSON.stringify(lastPriorityPayload), { retain: true });
+    }
+
+    setInterval(refreshPriorityHeartbeat, PRIORITY_HEARTBEAT_MS);
+
+    // 关页面时尽力清一次，让 3D 侧立刻收敛；真正兜底的是那边的 40 秒超时
+    window.addEventListener('pagehide', () => {
+      publishPriority(null, 0, 0);
+    });
+
     // ================== 7. 初始化 ==================
     initChart();
     initMQTT();

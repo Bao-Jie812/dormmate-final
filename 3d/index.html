@@ -21,14 +21,18 @@
 </head>
 <body>
  <div id="info">
-  <h2>DormMate 3D 宿舍</h2>
+  <h2>DormMate 3D 宿舍总览</h2>
   <div>当前节点：<span id="currentNode" style="color:#2563eb;font-weight:bold;">dorm-a</span></div>
   <div>当前状态：<span class="status" id="statusText">等待数据...</span></div>
+  <div id="priorityInfo" style="display:none; margin-top:6px; color:#b45309; font-weight:bold; font-size:14px;"></div>
   <div style="margin-top: 10px; display: flex; gap: 8px;">
     <button onclick="switchNode('dorm-a')" id="btn-dorm-a" style="padding:4px 12px; border:1px solid #cbd5e1; border-radius:6px; background:#2563eb; color:white; cursor:pointer;">dorm-a</button>
     <button onclick="switchNode('dorm-b')" id="btn-dorm-b" style="padding:4px 12px; border:1px solid #cbd5e1; border-radius:6px; background:white; color:#1e293b; cursor:pointer;">dorm-b</button>
     <button onclick="switchNode('dorm-c')" id="btn-dorm-c" style="padding:4px 12px; border:1px solid #cbd5e1; border-radius:6px; background:white; color:#1e293b; cursor:pointer;">dorm-c</button>
+    <button onclick="showOverview()" id="btn-overview" style="padding:4px 12px; border:1px solid #cbd5e1; border-radius:6px; background:white; color:#1e293b; cursor:pointer;">全景</button>
+    <button onclick="startReplay()" id="btn-replay" style="padding:4px 12px; border:1px solid #cbd5e1; border-radius:6px; background:white; color:#1e293b; cursor:pointer;">事件回放</button>
   </div>
+  <div id="replayInfo" style="display:none; margin-top:6px; color:#7c3aed; font-weight:bold; font-size:13px;"></div>
   <div id="actionTip" style="color:#d97706; font-size:14px; margin-top:5px;">
     </div>
   </div>
@@ -41,14 +45,14 @@
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0xf3f6fb);
     const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-    camera.position.set(4.5, 4,6.5);
-    camera.lookAt(0, 0.8, 0);
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     document.body.appendChild(renderer.domElement);
 
     // 三盏灯的强度之和必须控制在 1.0 附近：three.js 里 1.0 就是满亮度，
-    // 超过 1.0 后材质颜色的各个通道会被裁到 1，地板/窗户就会变成纯白，看不出状态色
+    // 超过 1.0 后材质颜色的各个通道会被裁到 1，地板/窗户就会变成纯白，看不出状态色。
+    // 现有三盏灯在房间中心的红通道合计已经 ≈1.03，顶到上限了 ——
+    // 所以三间宿舍共用这三盏灯，一盏都不要加；高亮也只用不受光的材质。
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
     scene.add(ambientLight);
     const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
@@ -59,113 +63,327 @@
     warmLight.position.set(2, 3, 2);
     scene.add(warmLight);
 
-    // ================= 2. 创建 3D 对象 =================
-    const floorGeometry = new THREE.BoxGeometry(8, 0.2, 8);
-    const floorMaterial = new THREE.MeshStandardMaterial({ color: 0xcbd5e1 });
-    const floor = new THREE.Mesh(floorGeometry, floorMaterial);
-    floor.position.y = -0.1;
-    scene.add(floor);
+    // ================= 2. 三间宿舍 =================
+    const ZONES = ['dorm-a', 'dorm-b', 'dorm-c'];
+    const ZONE_GAP = 9.5;   // 每间地板 8 宽 + 1.5 间隙
+    const zones = {};       // nodeId -> { group, floorMat, glassMat, blades, speed, status, ... }
 
-    const fanGroup = new THREE.Group();
-    const baseGeometry = new THREE.CylinderGeometry(0.6, 0.6, 0.2, 32);
-    const baseMaterial = new THREE.MeshStandardMaterial({ color: 0x64748b });
-    const fanBase = new THREE.Mesh(baseGeometry, baseMaterial);
-    fanBase.position.y = 0.1;
-    fanGroup.add(fanBase);
+    // 三间共用的几何体，以及不会变色的材质，避免重复创建
+    const sharedGeo = {
+      floor: new THREE.BoxGeometry(8, 0.2, 8),
+      fanBase: new THREE.CylinderGeometry(0.6, 0.6, 0.2, 32),
+      fanPole: new THREE.CylinderGeometry(0.08, 0.08, 1.5, 16),
+      housing: new THREE.TorusGeometry(0.8, 0.08, 16, 32),
+      blade: new THREE.BoxGeometry(1.5, 0.05, 0.4),
+      frame: new THREE.BoxGeometry(3.4, 2.4, 0.2),
+      glass: new THREE.BoxGeometry(3, 2, 0.05),
+      bedFrame: new THREE.BoxGeometry(2.2, 0.3, 3.5),
+      mattress: new THREE.BoxGeometry(2.0, 0.3, 3.3),
+      pillow: new THREE.BoxGeometry(1.6, 0.2, 0.6),
+      lampBase: new THREE.CylinderGeometry(0.3, 0.3, 0.1, 16),
+      lampPole: new THREE.CylinderGeometry(0.05, 0.05, 1.2, 8),
+      lampShade: new THREE.ConeGeometry(0.4, 0.5, 16),
+      // 指示灯环：外径上限 4.75（地板半宽 4 + 间隙 1.5），再大就会压到邻间地板
+      selectRing: new THREE.RingGeometry(4.4, 4.7, 48),
+      priorityRing: new THREE.RingGeometry(3.8, 4.35, 48),
+    };
+    const sharedMat = {
+      metal: new THREE.MeshStandardMaterial({ color: 0x64748b }),
+      pole: new THREE.MeshStandardMaterial({ color: 0x94a3b8 }),
+      housing: new THREE.MeshStandardMaterial({ color: 0x475569 }),
+      blade: new THREE.MeshStandardMaterial({ color: 0x94a3b8 }),
+      frame: new THREE.MeshStandardMaterial({ color: 0x94a3b8 }),
+      mattress: new THREE.MeshStandardMaterial({ color: 0xf8fafc }),
+      pillow: new THREE.MeshStandardMaterial({ color: 0xcbd5e1 }),
+      lampBase: new THREE.MeshStandardMaterial({ color: 0x475569 }),
+      lampShade: new THREE.MeshStandardMaterial({ color: 0xfcd34d }),
+      // 两个指示灯环用 MeshBasicMaterial：不受光照影响、颜色精确，
+      // 也不会给已经贴到上限的光照总量再加一分（用发光/提亮做高亮会再次把地板洗白）
+      select: new THREE.MeshBasicMaterial({ color: 0x2563eb, transparent: true, opacity: 0.75, side: THREE.DoubleSide, depthWrite: false }),
+      priority: new THREE.MeshBasicMaterial({ color: 0xd97706, transparent: true, opacity: 0.6, side: THREE.DoubleSide, depthWrite: false }),
+    };
 
-    const poleGeometry = new THREE.CylinderGeometry(0.08, 0.08, 1.5, 16);
-    const poleMaterial = new THREE.MeshStandardMaterial({ color: 0x94a3b8 });
-    const pole = new THREE.Mesh(poleGeometry, poleMaterial);
-    pole.position.y = 0.85;
-    fanGroup.add(pole);
+    // 标签上除了宿舍名还要写状态：一间没收到过数据的宿舍和"正常"宿舍外观完全一样，
+    // 三间并排时只写名字会被读成"三间都正常"
+    const LABEL_COLORS = { '正常': '#16a34a', '偏热': '#dc2626', '偏冷': '#2563eb', '偏湿': '#d97706' };
 
-    const headGroup = new THREE.Group();
-    headGroup.position.y = 1.7;
-    const housingGeometry = new THREE.TorusGeometry(0.8, 0.08, 16, 32);
-    const housingMaterial = new THREE.MeshStandardMaterial({ color: 0x475569 });
-    const housing = new THREE.Mesh(housingGeometry, housingMaterial);
-    headGroup.add(housing);
+    function createLabel(nodeId) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 512;    // 2 的幂：WebGL1 下非 2 的幂纹理有限制
+      canvas.height = 256;
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.generateMipmaps = false;
+      texture.minFilter = THREE.LinearFilter;
 
-    const bladeGroup = new THREE.Group();
-    for (let i = 0; i < 3; i++) {
-      const bladeGeometry = new THREE.BoxGeometry(1.5, 0.05, 0.4);
-      const bladeMaterial = new THREE.MeshStandardMaterial({ color: 0x94a3b8 });
-      const blade = new THREE.Mesh(bladeGeometry, bladeMaterial);
-      const angle = (i * 120) * Math.PI / 180;
-      blade.position.set(Math.cos(angle) * 0.75, Math.sin(angle) * 0.75, 0);
-      blade.rotation.z = angle;
-      blade.rotation.x = 0.2;
-      bladeGroup.add(blade);
+      // 名牌做成立在房间正前方地板上的小牌子：平铺后仰 40° 正对视线，
+      // 字看得清，也不会像挂在半空的标签那样跑到窗户那边去、三间对不齐。
+      // 用 MeshBasicMaterial（不受光），不占光照额度
+      const sign = new THREE.Mesh(
+        new THREE.PlaneGeometry(3.2, 1.6),
+        new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide, depthWrite: false })
+      );
+      sign.rotation.x = -Math.PI / 2 + 0.7;
+      sign.position.set(0, 0.6, 3.1);
+      return { canvas: canvas, ctx: canvas.getContext('2d'), texture: texture, sign: sign };
     }
-    bladeGroup.position.z = 0.1;
-    headGroup.add(bladeGroup);
-    fanGroup.add(headGroup);
-    scene.add(fanGroup);
 
-    const windowGroup = new THREE.Group();
-    windowGroup.position.set(0, 3, -4);
-    const frameGeometry = new THREE.BoxGeometry(3.4, 2.4, 0.2);
-    const frameMaterial = new THREE.MeshStandardMaterial({ color: 0x94a3b8 });
-    const frame = new THREE.Mesh(frameGeometry, frameMaterial);
-    windowGroup.add(frame);
-    const glassGeometry = new THREE.BoxGeometry(3, 2, 0.05);
-    const glassMaterial = new THREE.MeshStandardMaterial({ color: 0x38bdf8, emissive: 0x0ea5e9, transparent: true, opacity: 0.7 });
-    const glass = new THREE.Mesh(glassGeometry, glassMaterial);
-    glass.position.z = 0.1;
-    windowGroup.add(glass);
-    scene.add(windowGroup);
-    // ================= 新增：宿舍床铺 =================
-const bedGroup = new THREE.Group();
-bedGroup.position.set(-2, 0, 1); // 放在风扇左侧
+    function drawZoneLabel(zone) {
+      const ctx = zone.label.ctx;
+      const canvas = zone.label.canvas;
+      const status = zone.status || '等待数据';
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (zone.isPriority) {
+        ctx.fillStyle = '#d97706';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 64px system-ui, "Microsoft YaHei", sans-serif';
+      ctx.fillStyle = zone.isPriority ? '#ffffff' : '#1e293b';
+      ctx.fillText(zone.nodeId, canvas.width / 2, 96);
+      ctx.font = 'bold 60px system-ui, "Microsoft YaHei", sans-serif';
+      ctx.fillStyle = zone.isPriority ? '#ffffff' : (LABEL_COLORS[status] || '#64748b');
+      ctx.fillText(status, canvas.width / 2, 196);
+      zone.label.texture.needsUpdate = true;
+    }
 
-const bedFrameGeo = new THREE.BoxGeometry(2.2, 0.3, 3.5);
-const bedFrameMat = new THREE.MeshStandardMaterial({ color: 0x64748b });
-const bedFrame = new THREE.Mesh(bedFrameGeo, bedFrameMat);
-bedFrame.position.y = 0.3;
-bedGroup.add(bedFrame);
+    // ================= 浮动小牌子 =================
+    // 地板名牌负责"宿舍名 + 状态"，浮动牌子只负责瞬态/告警信息（处理中 / 已恢复 / 优先关注）
+    const BADGE_Y = 5.4;   // 再高会在极宽屏下被切出画幅
 
-const mattressGeo = new THREE.BoxGeometry(2.0, 0.3, 3.3);
-const mattressMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc });
-const mattress = new THREE.Mesh(mattressGeo, mattressMat);
-mattress.position.y = 0.6;
-bedGroup.add(mattress);
+    function createBadge() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 1024;   // 4:1，2 的幂
+      canvas.height = 256;
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.generateMipmaps = false;
+      texture.minFilter = THREE.LinearFilter;
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false }));
+      sprite.scale.set(3.6, 0.9, 1);   // 比例必须与画布 4:1 一致，否则文字被拉伸
+      sprite.position.set(0, BADGE_Y, 0);
+      sprite.visible = false;
+      // 关掉拾取：r128 的 Sprite 求交按矩形判定、完全不看 alpha，
+      // 不关的话"房间正上方的一块空气"也会被点中，还会占掉别处的悬停手型
+      sprite.raycast = function () {};
+      return { canvas: canvas, ctx: canvas.getContext('2d'), texture: texture, sprite: sprite, text: '' };
+    }
 
-const pillowGeo = new THREE.BoxGeometry(1.6, 0.2, 0.6);
-const pillowMat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1 });
-const pillow = new THREE.Mesh(pillowGeo, pillowMat);
-pillow.position.set(0, 0.8, -1.2);
-bedGroup.add(pillow);
+    function badgeTextOf(zone) {
+      // 处理中优先：动作正在进行时，这条信息比"优先关注"更该被看到
+      if (zone.processing) return `处理中：${zone.actionName}`;
+      if (zone.recoveredUntil && Date.now() < zone.recoveredUntil) return '已恢复';
+      if (zone.isPriority) return '⚠ 优先关注';
+      return '';
+    }
 
-scene.add(bedGroup);
+    function drawBadge(zone) {
+      const text = badgeTextOf(zone);
+      const sprite = zone.badge.sprite;
+      if (text === zone.badge.text) {
+        sprite.visible = !!text;
+        return;   // 内容没变就不重绘（每绘一次就是一次纹理上传）
+      }
+      zone.badge.text = text;
+      sprite.visible = !!text;
+      if (!text) return;
 
-// ================= 新增：暖色台灯 =================
-const lampGroup = new THREE.Group();
-lampGroup.position.set(2.5, 0, 1);
+      const ctx = zone.badge.ctx;
+      const canvas = zone.badge.canvas;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      // 只画一个圆角药丸，不要整块 fillRect —— 整块会把后面的窗户糊住
+      ctx.fillStyle = (text === '已恢复') ? 'rgba(22, 163, 74, 0.92)' : 'rgba(217, 119, 6, 0.92)';
+      if (ctx.roundRect) {
+        ctx.beginPath();
+        ctx.roundRect(0, 0, canvas.width, canvas.height, 64);
+        ctx.fill();
+      } else {
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 96px system-ui, "Microsoft YaHei", sans-serif';
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(text, canvas.width / 2, 168);
+      zone.badge.texture.needsUpdate = true;
+    }
 
-const lampBaseGeo = new THREE.CylinderGeometry(0.3, 0.3, 0.1, 16);
-const lampBaseMat = new THREE.MeshStandardMaterial({ color: 0x475569 });
-const lampBase = new THREE.Mesh(lampBaseGeo, lampBaseMat);
-lampGroup.add(lampBase);
+    // 建一间宿舍：地板、风扇、床铺、台灯、窗户、指示灯环、名字标签、浮动牌子
+    function createZone(nodeId, centerX) {
+      const group = new THREE.Group();
+      group.position.x = centerX;
+      group.userData.nodeId = nodeId;
 
-const lampPoleGeo = new THREE.CylinderGeometry(0.05, 0.05, 1.2, 8);
-const lampPoleMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8 });
-const lampPole = new THREE.Mesh(lampPoleGeo, lampPoleMat);
-lampPole.position.y = 0.6;
-lampGroup.add(lampPole);
+      // 地板与玻璃必须每间独立：它们要各自显示自己宿舍的状态色
+      const floorMat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1 });
+      const floorMesh = new THREE.Mesh(sharedGeo.floor, floorMat);
+      floorMesh.position.y = -0.1;
+      group.add(floorMesh);
 
-const lampShadeGeo = new THREE.ConeGeometry(0.4, 0.5, 16);
-const lampShadeMat = new THREE.MeshStandardMaterial({ color: 0xfcd34d });
-const lampShade = new THREE.Mesh(lampShadeGeo, lampShadeMat);
-lampShade.position.y = 1.3;
-lampGroup.add(lampShade);
+      const glassMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.7 });
+      // emissive 在这里就按 color×0.35 初始化：直接写 0x0ea5e9 会让首帧比之后任何状态都亮
+      glassMat.emissive.copy(glassMat.color).multiplyScalar(0.35);
+      const glassMesh = new THREE.Mesh(sharedGeo.glass, glassMat);
+      glassMesh.position.z = 0.1;
+      const windowGroup = new THREE.Group();
+      windowGroup.position.set(0, 3, -4);
+      windowGroup.add(new THREE.Mesh(sharedGeo.frame, sharedMat.frame));
+      windowGroup.add(glassMesh);
+      group.add(windowGroup);
 
-scene.add(lampGroup);
+      const fanGroup = new THREE.Group();
+      const fanBase = new THREE.Mesh(sharedGeo.fanBase, sharedMat.metal);
+      fanBase.position.y = 0.1;
+      fanGroup.add(fanBase);
+      const pole = new THREE.Mesh(sharedGeo.fanPole, sharedMat.pole);
+      pole.position.y = 0.85;
+      fanGroup.add(pole);
+
+      const headGroup = new THREE.Group();
+      headGroup.position.y = 1.7;
+      headGroup.add(new THREE.Mesh(sharedGeo.housing, sharedMat.housing));
+
+      const blades = new THREE.Group();
+      for (let i = 0; i < 3; i++) {
+        const blade = new THREE.Mesh(sharedGeo.blade, sharedMat.blade);
+        const angle = (i * 120) * Math.PI / 180;
+        blade.position.set(Math.cos(angle) * 0.75, Math.sin(angle) * 0.75, 0);
+        blade.rotation.z = angle;
+        blade.rotation.x = 0.2;
+        blades.add(blade);
+      }
+      blades.position.z = 0.1;
+      headGroup.add(blades);
+      fanGroup.add(headGroup);
+      group.add(fanGroup);
+
+      const bedGroup = new THREE.Group();
+      bedGroup.position.set(-2, 0, 1);
+      const bedFrame = new THREE.Mesh(sharedGeo.bedFrame, sharedMat.metal);
+      bedFrame.position.y = 0.3;
+      bedGroup.add(bedFrame);
+      const mattress = new THREE.Mesh(sharedGeo.mattress, sharedMat.mattress);
+      mattress.position.y = 0.6;
+      bedGroup.add(mattress);
+      const pillow = new THREE.Mesh(sharedGeo.pillow, sharedMat.pillow);
+      pillow.position.set(0, 0.8, -1.2);
+      bedGroup.add(pillow);
+      group.add(bedGroup);
+
+      const lampGroup = new THREE.Group();
+      lampGroup.position.set(2.5, 0, 1);
+      lampGroup.add(new THREE.Mesh(sharedGeo.lampBase, sharedMat.lampBase));
+      const lampPole = new THREE.Mesh(sharedGeo.lampPole, sharedMat.pole);
+      lampPole.position.y = 0.6;
+      lampGroup.add(lampPole);
+      const lampShade = new THREE.Mesh(sharedGeo.lampShade, sharedMat.lampShade);
+      lampShade.position.y = 1.3;
+      lampGroup.add(lampShade);
+      group.add(lampGroup);
+
+      // 指示灯环：RingGeometry 默认躺在 XY 平面，必须绕 X 转 -90° 才是平铺朝上。
+      // 两个环用不同半径区间和不同高度，避免互相 z-fighting
+      const selectRing = new THREE.Mesh(sharedGeo.selectRing, sharedMat.select);
+      selectRing.rotation.x = -Math.PI / 2;
+      selectRing.position.y = 0.03;
+      selectRing.visible = false;
+      group.add(selectRing);
+
+      const priorityMat = sharedMat.priority.clone();
+      const priorityRing = new THREE.Mesh(sharedGeo.priorityRing, priorityMat);
+      priorityRing.rotation.x = -Math.PI / 2;
+      priorityRing.position.y = 0.05;
+      priorityRing.visible = false;
+      group.add(priorityRing);
+
+      const label = createLabel(nodeId);
+      group.add(label.sign);
+
+      // 浮动牌子挂进 group，但加了 raycast = noop 所以不参与拾取；
+      // 追加在最后，前面各子对象的索引不变
+      const badge = createBadge();
+      group.add(badge.sprite);
+
+      scene.add(group);
+
+      const zone = {
+        nodeId: nodeId, group: group, floorMat: floorMat, glassMat: glassMat,
+        blades: blades, speed: 0.02, status: '', isPriority: false,
+        selectRing: selectRing, priorityRing: priorityRing, priorityMat: priorityMat,
+        label: label, badge: badge,
+        // 处理动作相关：由 3D 依据 action 消息 + 后续 env 数据自行推断
+        processing: false, actionName: '', msgsAfterAction: 0, lastCountedTime: '', recoveredUntil: 0,
+      };
+      zones[nodeId] = zone;
+      drawZoneLabel(zone);
+      drawBadge(zone);
+      return zone;
+    }
 
     // ================= 3. 状态映射与更新逻辑 =================
-    let fanSpeed = 0;
-    let currentStatus = ''; // 当前生效的状态，提示文案要用
+    let currentStatus = '';   // 当前选中宿舍的状态，面板提示文案要用
+    let currentNodeId = 'dorm-a';
+    const latestData = {};    // 每个宿舍最近一条 env 报文
 
-    // 各状态对应的提示语。转速描述必须和下面 switch 里的 fanSpeed 对得上，
+    // 四个状态的场景表现。数值与改造前完全一致，只是改成查表以便按宿舍应用
+    const ACTION_SPEED = 0.4;    // 收到「开启风扇」指令时的转速，与偏热的转速一致
+    const RECOVERED_HOLD_MS = 5000;   // 「已恢复」牌子保留多久
+    const STATUS_STYLE = {
+      '正常': { speed: 0.02, floor: 0xcbd5e1, glass: 0x38bdf8 },
+      '偏热': { speed: 0.4, floor: 0xfca5a5, glass: 0xef4444 },
+      '偏冷': { speed: 0, floor: 0x93c5fd, glass: 0x3b82f6 },
+      '偏湿': { speed: 0.15, floor: 0xfcd34d, glass: 0xd97706 },
+    };
+
+    // 单间外观复位（正常态）：该间状态未知时用
+    function resetZone(zone) {
+      zone.speed = 0.02;
+      zone.floorMat.color.set(0xcbd5e1);
+      zone.glassMat.color.set(0x38bdf8);
+    }
+
+    // 只更新某一间宿舍的外观，不影响其它两间，也不碰面板
+    function applyZoneStatus(nodeId, status) {
+      const zone = zones[nodeId];
+      if (!zone) return;
+      const style = STATUS_STYLE[status];
+      if (style) {
+        zone.speed = style.speed;
+        zone.floorMat.color.set(style.floor);
+        zone.glassMat.color.set(style.glass);
+      } else {
+        resetZone(zone);
+      }
+      // 窗户自发光跟着状态色走：写死蓝色 emissive 会把偏热/偏湿的窗户冲成白色
+      zone.glassMat.emissive.copy(zone.glassMat.color).multiplyScalar(0.35);
+      // 标签只在状态真的变了才重绘（每绘一次就是一次纹理上传）
+      if (zone.status !== status) {
+        zone.status = status;
+        drawZoneLabel(zone);
+      }
+      // 处理动作没结束前，转速保持在动作带来的提升上（颜色照常跟随状态）。
+      // 放在函数最后：这样连上面 resetZone() 分支顺手写的 0.02 也能兜住
+      if (zone.processing) zone.speed = ACTION_SPEED;
+    }
+
+    // 只更新左上方面板：传空字符串表示该间还没有数据
+    function updatePanel(status) {
+      const statusLabel = document.getElementById('statusText');
+      if (status) {
+        statusLabel.textContent = status;
+        // 类名与上方 <style> 里的 .status.偏热 等规则对应，状态文字才有颜色
+        statusLabel.className = `status ${status}`;
+      } else {
+        statusLabel.textContent = '等待 MQTT 数据...';
+        statusLabel.className = 'status';
+      }
+      currentStatus = status || '';
+      renderTip();
+    }
+
+    function setSelectedZone(nodeId) {
+      ZONES.forEach(id => { zones[id].selectRing.visible = (id === nodeId); });
+    }
+
+    // ================= 4. 提示位 =================
+    // 各状态对应的提示语。转速描述必须和上面 STATUS_STYLE 里的 speed 对得上，
     // 别写出"偏冷风扇还在转"这种和场景矛盾的文案
     const STATUS_TIPS = {
       '正常': '提示：环境舒适，风扇低速待机',
@@ -173,60 +391,15 @@ scene.add(lampGroup);
       '偏冷': '提示：温度偏低，风扇已停转，注意保暖',
       '偏湿': '提示：湿度偏高，风扇中速运行，正在除湿',
     };
+    // 还没有任何状态时提示位不留空白
+    const WAITING_TIP = '提示：等待 MQTT 数据';
 
-    // 场景外观复位：切到还没有数据的宿舍时，不能把上一间的颜色和转速留在场上
-    function resetScene() {
-      fanSpeed = 0.02;
-      floorMaterial.color.set(0xcbd5e1);
-      glassMaterial.color.set(0x38bdf8);
-      glassMaterial.emissive.copy(glassMaterial.color).multiplyScalar(0.35);
-    }
-
-    function updateScene(status) {
-      const statusLabel = document.getElementById('statusText');
-      statusLabel.textContent = status;
-      // 类名与上方 <style> 里的 .status.偏热 等规则对应，状态文字才有颜色
-      statusLabel.className = `status ${status}`;
-      switch (status) {
-        case '正常': fanSpeed = 0.02; floorMaterial.color.set(0xcbd5e1); glassMaterial.color.set(0x38bdf8); break;
-        case '偏热': fanSpeed = 0.4; floorMaterial.color.set(0xfca5a5); glassMaterial.color.set(0xef4444); break;
-        case '偏冷': fanSpeed = 0; floorMaterial.color.set(0x93c5fd); glassMaterial.color.set(0x3b82f6); break;
-        case '偏湿': fanSpeed = 0.15; floorMaterial.color.set(0xfcd34d); glassMaterial.color.set(0xd97706); break;
-        default: resetScene(); break; // 未知状态：复位，别留着上一间的配色
-      }
-      currentStatus = status;
-      // 窗户自发光跟着状态色走：原来固定写死蓝色 emissive，
-      // 它会直接叠加在玻璃上，把偏热/偏湿的窗户也冲成白色
-      glassMaterial.emissive.copy(glassMaterial.color).multiplyScalar(0.35);
-      floorMaterial.needsUpdate = true;
-      glassMaterial.needsUpdate = true;
-      renderTip();
-    }
-
-    // ================= 4. 动画循环 =================
-    // 启动时先复位一次：玻璃 emissive 初值 0x0ea5e9 没乘系数，首帧比之后任何状态都亮
-    resetScene();
-
-    function animate() {
-      requestAnimationFrame(animate);
-      bladeGroup.rotation.z += fanSpeed;
-      renderer.render(scene, camera);
-    }
-    animate();
-
-    // ================= 5. MQTT 连接与实时驱动 =================
-    let currentNodeId = 'dorm-a';
-    const latestData = {};
-
-    // 提示位：状态提示常驻，收到处理指令时临时占用 5 秒再让位。
+    // 状态提示常驻，收到处理指令时临时占用 5 秒再让位。
     // 只翻标志位、由 renderTip() 统一决定显示内容——如果把文案字符串存进 setTimeout，
     // 5 秒内到达的新数据刷新了状态提示后，会被定时器用旧文案盖回去
     let currentActionTip = '';
     let actionTipActive = false;
     let actionTipTimer = null;
-
-    // 还没有任何状态时提示位不留空白
-    const WAITING_TIP = '提示：等待 MQTT 数据';
 
     function renderTip() {
       document.getElementById('actionTip').textContent =
@@ -252,12 +425,198 @@ scene.add(lampGroup);
       renderTip();
     }
 
+    // ================= 5. 相机自适应 =================
+    // 三间并排后场景总宽约 29，必须按窗口比例自动退到能看全三间的距离。
+    // 不用闭式公式（斜视下不成立，近侧外圈会被左右裁掉），改成对包围盒 8 个角点
+    // 做投影校验的迭代，直接用真实相机矩阵判断，窄屏也不会漏
+    const CAM_DIR = new THREE.Vector3(0, 0.55, 0.84).normalize();
+    const CAM_TARGET = new THREE.Vector3(0, 1.2, 0);
+    const FIT_MARGIN = 0.96;   // 画面填充率：越大越近，1.0 就是刚好贴边
+
+    // 两种取景：三间全览 / 单间特写（单间的 halfW 收不动了，卡住距离的是垂直方向）
+    const OVERVIEW_BOX = { halfW: 14.2, topY: 4.4, halfD: 4.4 };   // 含指示灯环外沿
+    const ZONE_BOX = { halfW: 4.9, topY: 4.4, halfD: 4.4 };
+    const zoneTarget = (nodeId) => new THREE.Vector3(zones[nodeId].group.position.x, 1.2, 0);
+
+    // 相机状态只有两个量：距离 d 与注视点 camTarget。
+    // position = CAM_DIR * d + target 对 (d, target) 是仿射的，所以补间只插值这两个量，
+    // 就能保证全程 position - target 恒平行于 CAM_DIR —— 纯推轨、不转头
+    // （正对视角才看得清扇叶的旋转面）
+    let camD = 0;
+    // 必须是独立向量，不能别名 CAM_TARGET：否则一聚焦就把全景基准点写坏
+    const camTarget = new THREE.Vector3();
+    let camTween = null;      // { fromD, toD, fromT, toT, startT, dur }
+    let camView = 'overview'; // 'overview' 或某个 nodeId
+    const CAM_TWEEN_DUR = 0.7;   // 秒
+
+    // 全场景唯一的相机写入口
+    function setCamera(d, target) {
+      camD = d;
+      camTarget.copy(target);
+      camera.position.copy(CAM_DIR).multiplyScalar(d).add(camTarget);
+      camera.lookAt(camTarget);
+    }
+
+    function cancelCamTween() {
+      camTween = null;
+    }
+
+    function viewOf(mode) {
+      if (mode === 'overview') return { box: OVERVIEW_BOX, target: CAM_TARGET };
+      return { box: ZONE_BOX, target: zoneTarget(mode) };
+    }
+
+    // 把相机摆到距离 d、注视 target，返回包围盒 8 个角点里最靠边那个的屏幕坐标绝对值（1.0 = 贴边）
+    function measureExtent(d, box, target) {
+      camera.position.copy(CAM_DIR).multiplyScalar(d).add(target);
+      camera.lookAt(target);   // 必须与 position 用同一个 target，否则相机方向不再是 -CAM_DIR
+      camera.updateMatrixWorld(true);
+      let worst = 0;
+      // 横向范围要跟着注视点平移：聚焦到 x=±9.5 的宿舍时，
+      // 用世界坐标的 ±halfW 去测会得到一个偏离目标 14 个单位的包围盒，
+      // 算出来的距离比全景还远（桩测试就是这么抓出来的）。
+      // y 与 z 是场景的绝对坐标，不用偏
+      for (const x of [target.x - box.halfW, target.x + box.halfW]) {
+        for (const y of [0, box.topY]) {
+          for (const z of [-box.halfD, box.halfD]) {
+            const p = new THREE.Vector3(x, y, z).project(camera);
+            worst = Math.max(worst, Math.abs(p.x), Math.abs(p.y));
+          }
+        }
+      }
+      return worst;
+    }
+
+    // 二分求"最小的能装下这个包围盒的距离"。
+    // 不能用 d *= worst/margin 的一步外推：相机离得近时近处角点的投影是超线性放大的，
+    // 一步就会冲过头，结果反而更远
+    function computeFitDistance(box, target) {
+      camera.updateProjectionMatrix();
+      let lo = 5;
+      let hi = 10;
+      while (measureExtent(hi, box, target) > FIT_MARGIN && hi < 500) {
+        lo = hi;
+        hi *= 1.6;
+      }
+      for (let i = 0; i < 12; i++) {
+        const mid = (lo + hi) / 2;
+        if (measureExtent(mid, box, target) <= FIT_MARGIN) hi = mid;
+        else lo = mid;
+      }
+      return hi;
+    }
+
+    // 立即落到当前视图的取景（首屏与 resize 用），不做补间。
+    // 桩测试在调用后直接读 camera.position 做投影校验，所以这里必须同步生效
+    function fitCamera() {
+      cancelCamTween();
+      const view = viewOf(camView);
+      setCamera(computeFitDistance(view.box, view.target), view.target);
+    }
+
+    // 平滑推轨到某个取景
+    function moveToView(mode) {
+      camView = mode;
+      const view = viewOf(mode);
+      camTween = {
+        fromD: camD,
+        toD: computeFitDistance(view.box, view.target),
+        fromT: camTarget.clone(),
+        toT: view.target.clone(),
+        startT: clock.getElapsedTime(),
+        dur: CAM_TWEEN_DUR,
+      };
+    }
+
+    function focusZone(nodeId) {
+      if (zones[nodeId]) moveToView(nodeId);
+    }
+
+    function showOverview() {
+      moveToView('overview');
+    }
+
+    // ================= 6. 点击拾取 =================
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+
+    function pickNodeId(event) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointer, camera);
+      const hits = raycaster.intersectObjects(ZONES.map(id => zones[id].group), true);
+      for (const hit of hits) {
+        // 不直接取 hits[0]：装饰物或透明面可能排在前面，
+        // 应取第一个能沿父级找到宿舍归属的命中
+        let o = hit.object;
+        while (o && !o.userData.nodeId) o = o.parent;
+        if (o) return o.userData.nodeId;
+      }
+      return null;
+    }
+
+    renderer.domElement.addEventListener('click', (event) => {
+      const nodeId = pickNodeId(event);
+      if (nodeId) switchNode(nodeId);
+    });
+
+    // 悬停反馈：能点中的地方给个手型光标
+    renderer.domElement.addEventListener('mousemove', (event) => {
+      renderer.domElement.style.cursor = pickNodeId(event) ? 'pointer' : 'default';
+    });
+
+    // ================= 7. 优先关注（来自 Dashboard 的 MQTT 判定） =================
+    // Dashboard 关掉后 retain 消息会一直留在 Broker 上，所以超过这个时限就当作失效并清除高亮。
+    // 40 秒 ≈ 3 倍 Dashboard 心跳（12 秒），Dashboard 正常运行时不会被误判
+    const PRIORITY_MAX_AGE = 40000;
+    let priorityNodeId = null;
+
+    function applyPriority(data) {
+      const stale = !data.ts || Date.now() - data.ts > PRIORITY_MAX_AGE;
+      if (stale) {
+        console.warn('优先关注消息已过期（Dashboard 可能已关闭），清除高亮');
+      }
+      const nextId = stale ? null : (data.nodeId || null);
+
+      // 面板文案每次都刷新（持续分钟数会变），高亮只在节点变化时才动，避免重复重绘标签
+      const info = document.getElementById('priorityInfo');
+      if (nextId) {
+        const minutes = Math.floor((data.durationSec || 0) / 60);
+        info.textContent = `当前优先关注：${nextId}（已持续 ${minutes < 1 ? '不到 1' : minutes} 分钟，累计 ${data.count || 0} 次）`;
+        info.style.display = 'block';
+      } else {
+        info.textContent = '';
+        info.style.display = 'none';
+      }
+
+      // 心跳重复同一条时从这里早退：高亮状态没变，不必重绘（牌子同理，别加在这条之前）
+      if (nextId === priorityNodeId) return;
+      priorityNodeId = nextId;
+      ZONES.forEach(id => {
+        const zone = zones[id];
+        const on = (id === priorityNodeId);
+        zone.isPriority = on;
+        zone.priorityRing.visible = on;
+        drawZoneLabel(zone);
+        drawBadge(zone);
+      });
+    }
+
+    // ================= 8. 节点切换 =================
     function switchNode(nodeId) {
+      // 点在已选中的宿舍上：不重复走一遍切换（否则会把正在显示的动作提示清掉），
+      // 但镜头该聚焦还是要聚焦 —— 少了这一句，
+      //「聚焦 dorm-a → 点全景 → 再点 dorm-a」就再也回不到聚焦状态了
+      if (nodeId === currentNodeId) {
+        focusZone(nodeId);
+        return;
+      }
       currentNodeId = nodeId;
       document.getElementById('currentNode').textContent = nodeId;
       // 上一个宿舍的动作提示不能留在面板上，避免误读成当前宿舍的
       clearActionTip();
-      ['dorm-a', 'dorm-b', 'dorm-c'].forEach(id => {
+      ZONES.forEach(id => {
         const btn = document.getElementById(`btn-${id}`);
         if (id === nodeId) {
           btn.style.background = '#2563eb';
@@ -267,55 +626,223 @@ scene.add(lampGroup);
           btn.style.color = '#1e293b';
         }
       });
-      if (latestData[nodeId]) {
-        updateScene(latestData[nodeId].status);
-      } else {
-        // 没有数据的宿舍：文字、文字配色、3D 场景三者一起复位，
-        // 否则会出现"文字写着等待数据，地板还是上一间的红色、风扇还在转"
-        currentStatus = '';
-        resetScene();
-        const statusLabel = document.getElementById('statusText');
-        statusLabel.textContent = '等待 MQTT 数据...';
-        statusLabel.className = 'status';
-        renderTip();
-      }
+      setSelectedZone(nodeId);
+      focusZone(nodeId);
+      // 面板显示该间自己的状态；没收到过数据就显示等待。
+      // 注意这里不再复位场景：每间始终显示自己的状态，切宿舍不该改变任何房间的外观
+      updatePanel(latestData[nodeId] ? latestData[nodeId].status : '');
     }
 
+    // ================= 9. MQTT 连接与实时驱动 =================
     const client = mqtt.connect('ws://127.0.0.1:8083');
     client.on('connect', () => {
       console.log('3D 场景已连接到 MQTT Broker');
-      client.subscribe(['dormmate/+/env', 'dormmate/+/action']);
+      client.subscribe(['dormmate/+/env', 'dormmate/+/action', 'dormmate/priority']);
     });
 
-    client.on('message', (topic, message) => {
+    // 消息处理抽成独立函数：实时 MQTT 与「事件回放」共用同一条链路。
+    // 回放因此不是"另写一套渲染"，而是在复演真实报文走过的逻辑
+    function applyMqttMessage(topic, message) {
       try {
         const data = JSON.parse(message.toString());
-        if (data.nodeId && data.status) {
-          latestData[data.nodeId] = data;
-          if (data.nodeId === currentNodeId) {
-            updateScene(data.status);
-          }
+        // 优先关注走独立主题，必须按 topic 早退：
+        // 否则以后往这条 payload 里加 status / action 字段会串到下面的分支
+        if (topic === 'dormmate/priority') {
+          applyPriority(data);
+          return;
         }
-        if (data.action === 'turn_on_fan') {
-          if (data.nodeId === currentNodeId) {
-            fanSpeed = 0.4;
-            showActionTip(`已收到 ${data.nodeId} 的指令：开启风扇`);
-            console.log(`收到 ${data.nodeId} 开启风扇指令，3D 风扇启动！`);
+
+        if (data.nodeId && data.status) {
+          const zone = zones[data.nodeId];
+          // 处理中：必须"先判恢复、再应用状态"。顺序反了的话，
+          // 恢复这条数据的转速要等下一条 env 才生效，看起来就是"已经恢复了风扇还在高速转"
+          if (zone && zone.processing) {
+            // 重连后 broker 会重放 retained 的 env，按 time 去重，别白送计数
+            if (!data.time || data.time !== zone.lastCountedTime) {
+              zone.lastCountedTime = data.time || '';
+              zone.msgsAfterAction += 1;
+              // 与 Dashboard 的判定逐字对齐：动作后累计 ≥2 条、且当前这条是正常
+              //（注意它并不要求连续两条都正常）
+              if (zone.msgsAfterAction >= 2 && data.status === '正常') {
+                zone.processing = false;
+                zone.recoveredUntil = Date.now() + RECOVERED_HOLD_MS;
+                drawBadge(zone);
+              }
+            }
           }
+          latestData[data.nodeId] = data;
+          // 三间各自上色：这里不能被"是否当前选中"挡住，否则另外两间永远是灰的
+          applyZoneStatus(data.nodeId, data.status);
+          if (data.nodeId === currentNodeId) updatePanel(data.status);
+        }
+
+        if (data.action === 'turn_on_fan') {
+          const zone = zones[data.nodeId];
+          if (!zone) return;
+          // 动作作用在目标宿舍那一间，可能并不是当前选中的那间。
+          // 同一节点再次收到动作时全部重来一遍，与 Dashboard「新对象覆盖旧对象」一致
+          zone.processing = true;
+          zone.msgsAfterAction = 0;
+          zone.lastCountedTime = '';
+          zone.recoveredUntil = 0;
+          zone.actionName = data.actionName || '开启风扇';
+          zone.speed = ACTION_SPEED;
+          drawBadge(zone);
+          if (data.nodeId === currentNodeId) {
+            showActionTip(`已收到 ${data.nodeId} 的指令：${zone.actionName}`);
+          }
+          console.log(`收到 ${data.nodeId} 开启风扇指令，3D 风扇启动！`);
         }
       } catch (e) {
         console.error('JSON 解析错误:', e);
       }
+    }
+
+    client.on('message', (topic, message) => {
+      // 回放期间忽略实时消息：否则真实数据插进来会把回放剧情打乱
+      if (replaying) return;
+      applyMqttMessage(topic, message);
     });
+
+    // ================= 10. 动画循环 =================
+    const clock = new THREE.Clock();
+    function animate() {
+      requestAnimationFrame(animate);
+      const t = clock.getElapsedTime();
+
+      // 相机补间：推进进度并落到 (camD, camTarget)。
+      // 每帧无条件 setCamera 很关键 —— computeFitDistance() 内部会挪相机去测投影，
+      // 下一帧就被这里覆盖，不会留下残留
+      if (camTween) {
+        const progress = Math.min(1, (t - camTween.startT) / camTween.dur);
+        // easeInOutCubic（桩环境没有 THREE.MathUtils，缓动自己写）
+        const k = progress < 0.5
+          ? 4 * progress * progress * progress
+          : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+        camD = camTween.fromD + (camTween.toD - camTween.fromD) * k;
+        camTarget.set(
+          camTween.fromT.x + (camTween.toT.x - camTween.fromT.x) * k,
+          camTween.fromT.y + (camTween.toT.y - camTween.fromT.y) * k,
+          camTween.fromT.z + (camTween.toT.z - camTween.fromT.z) * k
+        );
+        if (progress >= 1) camTween = null;
+      }
+      setCamera(camD, camTarget);
+
+      ZONES.forEach(id => {
+        const zone = zones[id];
+        zone.blades.rotation.z += zone.speed;
+
+        // 浮动牌子轻微上下浮动
+        if (zone.badge.sprite.visible) {
+          zone.badge.sprite.position.y = BADGE_Y + Math.sin(t * 2) * 0.12;
+        }
+        // 「已恢复」到点就收：用死线 + 每帧检查，而不是 setTimeout
+        //（标签页在后台时 setTimeout 会被节流，死线检查更稳）
+        if (zone.recoveredUntil && Date.now() > zone.recoveredUntil) {
+          zone.recoveredUntil = 0;
+          drawBadge(zone);
+        }
+
+        if (zone.isPriority) {
+          // 呼吸周期 2 秒，与 Dashboard 上优先卡片的 breathing 动画对齐
+          const k = 0.5 + 0.5 * Math.sin(t * Math.PI);
+          zone.priorityMat.opacity = 0.30 + 0.45 * k;
+          zone.priorityRing.scale.set(1 + 0.05 * k, 1 + 0.05 * k, 1);
+        }
+      });
+
+      stepReplay(t);
+      renderer.render(scene, camera);
+    }
+
+    // ================= 11. 事件回放（比赛演示用） =================
+    // 回放不写新的渲染逻辑：replay.json 里每一步都是一条与 MQTT 报文同构的
+    // { topic, payload }，直接喂给上面那条实时消息处理链路。
+    // 所以它既是演示，也是在对真实逻辑做一次复演；并且只作用于本页，不向 MQTT 发布任何东西
+    let replaying = false;
+    let replayPlan = null;   // { title, steps: [{ at, topic, payload }] }
+    let replayIndex = 0;
+    let replayStartT = 0;
+
+    function setReplayBanner(text) {
+      const banner = document.getElementById('replayInfo');
+      if (!banner) return;
+      banner.textContent = text;
+      banner.style.display = text ? 'block' : 'none';
+    }
+
+    function stopReplay(message) {
+      replaying = false;
+      const btn = document.getElementById('btn-replay');
+      if (btn) btn.textContent = '事件回放';
+      setReplayBanner(message || '');
+    }
+
+    async function startReplay() {
+      if (replaying) {
+        stopReplay('已停止回放');
+        return;
+      }
+      try {
+        if (!replayPlan) {
+          const response = await fetch('replay.json');
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          replayPlan = await response.json();
+        }
+      } catch (error) {
+        console.error('回放数据加载失败：', error);
+        showActionTip('回放数据加载失败，请用本地服务器打开本页（别直接双击 html 文件）');
+        return;
+      }
+
+      // 从干净状态开演：先清掉可能还挂着的优先关注
+      applyMqttMessage('dormmate/priority', JSON.stringify({ nodeId: null, ts: Date.now() }));
+      clearActionTip();
+      replaying = true;
+      replayIndex = 0;
+      replayStartT = clock.getElapsedTime();
+      const btn = document.getElementById('btn-replay');
+      if (btn) btn.textContent = '停止回放';
+      setReplayBanner(`回放中 0/${replayPlan.steps.length}：${replayPlan.title}`);
+    }
+
+    // 由动画循环按时间轴推进（用 clock 时间：标签页切后台回来不会乱序）
+    function stepReplay(t) {
+      if (!replaying || !replayPlan) return;
+      const elapsed = t - replayStartT;
+      const before = replayIndex;
+      while (replayIndex < replayPlan.steps.length && replayPlan.steps[replayIndex].at <= elapsed) {
+        const step = replayPlan.steps[replayIndex];
+        const payload = Object.assign({}, step.payload);
+        // 优先关注带 40 秒时效，JSON 里存不了"当前时间"，回放时补上时间戳
+        if (step.topic === 'dormmate/priority') payload.ts = Date.now();
+        applyMqttMessage(step.topic, JSON.stringify(payload));
+        replayIndex += 1;
+      }
+      if (replayIndex !== before) {
+        setReplayBanner(`回放中 ${replayIndex}/${replayPlan.steps.length}：${replayPlan.title}`);
+      }
+      if (replayIndex >= replayPlan.steps.length) {
+        stopReplay(`回放结束（共 ${replayPlan.steps.length} 步）`);
+      }
+    }
+
+    // ================= 12. 初始化 =================
+    ZONES.forEach((id, i) => createZone(id, (i - 1) * ZONE_GAP));
+    setSelectedZone(currentNodeId);
+    fitCamera();
+    renderTip();
+    animate();
 
     window.addEventListener('resize', () => {
       camera.aspect = window.innerWidth / window.innerHeight;
+      // 必须在 fitCamera 之前更新投影矩阵，否则角点校验用的是旧矩阵
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
+      // fitCamera 内部会取消正在进行的补间，并按当前视图（全景 / 聚焦某间）立即重新取景
+      fitCamera();
     });
-
-    // 首屏先把提示位填上等待语，否则左上角会留一块空白
-    renderTip();
   </script>
 </body>
 </html>

@@ -150,6 +150,7 @@ h1 {
 }
 
 .camera-area,
+.spot-area,
 .voice-area {
   margin-top: 24px;
   padding: 18px;
@@ -182,6 +183,55 @@ h1 {
   outline: none;
   border-color: #2563eb;
   box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.15);
+}
+
+/* 现场记录：每条 = 缩略图 + 节点 · 状态 · 时间。
+   必须清掉 list-style 和缩进——#historyList 是特意保留圆点的，照抄会得到"圆点 + 卡片行"的脏效果 */
+.spot-log {
+  list-style: none;
+  margin: 0;
+  padding-left: 0;
+  max-height: 320px;   /* 长时间演示时列表不会把页面撑爆 */
+  overflow-y: auto;
+}
+
+.spot-log li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.spot-log li:last-child {
+  border-bottom: none;
+}
+
+.spot-log img {
+  width: 96px;
+  height: 54px;          /* 16:9，与摄像头出图比例一致 */
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid #cbd5e1;
+  flex-shrink: 0;
+}
+
+.spot-log .spot-meta {
+  font-size: 14px;
+  color: #475569;
+  line-height: 1.5;
+}
+
+/* 节点做成醒目标签：列表跨宿舍混排，要一眼看出照片属于哪间 */
+.spot-log .spot-node {
+  font-weight: 700;
+  color: #2563eb;
+}
+
+.spot-log .spot-log-empty {
+  display: block;
+  color: #94a3b8;
+  font-size: 14px;
 }
 
 /* 状态标签块，让状态展示更突出。

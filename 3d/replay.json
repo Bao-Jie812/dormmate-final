@@ -1,0 +1,25 @@
+{
+  "title": "dorm-b 偏热 → 开启风扇 → 恢复，随后 dorm-a 转为偏湿",
+  "note": "每一步都是一条与 MQTT 报文同构的 { topic, payload }，回放时喂给与实时消息完全相同的处理链路；只作用于 3D 页面本地，不会向 MQTT 发布任何东西。at = 相对回放开头的秒数。",
+  "steps": [
+    { "at": 0.0, "topic": "dormmate/dorm-a/env", "payload": { "nodeId": "dorm-a", "temperature": 26, "humidity": 50, "status": "正常", "time": "2026-09-30 20:00:00" } },
+    { "at": 0.5, "topic": "dormmate/dorm-c/env", "payload": { "nodeId": "dorm-c", "temperature": 25, "humidity": 48, "status": "正常", "time": "2026-09-30 20:00:05" } },
+
+    { "at": 1.2, "topic": "dormmate/dorm-b/env", "payload": { "nodeId": "dorm-b", "temperature": 31, "humidity": 78, "status": "偏热", "time": "2026-09-30 20:00:12" } },
+    { "at": 2.2, "topic": "dormmate/dorm-b/env", "payload": { "nodeId": "dorm-b", "temperature": 32, "humidity": 80, "status": "偏热", "time": "2026-09-30 20:00:22" } },
+    { "at": 3.2, "topic": "dormmate/dorm-b/env", "payload": { "nodeId": "dorm-b", "temperature": 32, "humidity": 81, "status": "偏热", "time": "2026-09-30 20:00:32" } },
+
+    { "at": 4.0, "topic": "dormmate/priority", "payload": { "nodeId": "dorm-b", "durationSec": 168, "count": 3, "source": "replay" } },
+
+    { "at": 5.0, "topic": "dormmate/dorm-b/action", "payload": { "nodeId": "dorm-b", "action": "turn_on_fan", "actionName": "开启风扇" } },
+
+    { "at": 6.0, "topic": "dormmate/dorm-a/env", "payload": { "nodeId": "dorm-a", "temperature": 24, "humidity": 80, "status": "偏湿", "time": "2026-09-30 20:01:00" } },
+
+    { "at": 7.0, "topic": "dormmate/dorm-b/env", "payload": { "nodeId": "dorm-b", "temperature": 27, "humidity": 55, "status": "正常", "time": "2026-09-30 20:01:10" } },
+    { "at": 8.0, "topic": "dormmate/dorm-b/env", "payload": { "nodeId": "dorm-b", "temperature": 26, "humidity": 52, "status": "正常", "time": "2026-09-30 20:01:20" } },
+
+    { "at": 8.6, "topic": "dormmate/priority", "payload": { "nodeId": "dorm-a", "durationSec": 26, "count": 1, "source": "replay" } },
+    { "at": 9.6, "topic": "dormmate/dorm-a/env", "payload": { "nodeId": "dorm-a", "temperature": 24, "humidity": 60, "status": "正常", "time": "2026-09-30 20:01:36" } },
+    { "at": 10.2, "topic": "dormmate/priority", "payload": { "nodeId": null, "durationSec": 0, "count": 0, "source": "replay" } }
+  ]
+}

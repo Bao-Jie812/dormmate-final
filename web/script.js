@@ -16,6 +16,19 @@ const exportBtn = document.getElementById('exportBtn');
 // 历史记录：每条都带 nodeId，页面只渲染当前选中宿舍的那部分
 const historyRecords = [];
 
+// 现场记录：语音说「记录现场」或点拍照按钮时，留一条"什么时候、哪个宿舍、什么状态"的记录。
+// 只在内存里，不进 CSV、不发 MQTT
+const spotRecords = [];
+
+// 面板上正在显示的状态，'' 表示还没分析出结果（尚未分析 / 等待数据 / 输入有误）
+let currentStatus = '';
+
+// 拍照重入保护：短时间连说两次「记录现场」时不并发开第二路摄像头
+let capturing = false;
+
+// 中文 TTS 会把 "dorm-b" 逐个字母念出来，念确认语时换成「宿舍B」；记录里仍然显示 dorm-b
+const SPOKEN_NODES = { 'dorm-a': '宿舍A', 'dorm-b': '宿舍B', 'dorm-c': '宿舍C' };
+
 // 统一练习规则
 function judgeStatus(temperature, humidity) {
   if (temperature < 18) {
@@ -55,6 +68,8 @@ function setStatusText(text, status) {
   if (status) {
     statusText.classList.add(status);
   }
+  // 顺手记下当前状态，供「现场记录」引用，省得去解析面板文字
+  currentStatus = status || '';
 }
 
 function formatTime(date) {
@@ -170,29 +185,222 @@ exportBtn.addEventListener('click', () => {
   URL.revokeObjectURL(url);
 });
 
-cameraBtn.addEventListener('click', async () => {
+// ==================== 现场拍照（按钮与语音指令共用同一条路径） ====================
+// 给 Promise 套一层超时：getUserMedia 本身也可能挂住（驱动无响应），不能只等画面
+function withTimeout(promise, ms, message) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error) => { clearTimeout(timer); reject(error); }
+    );
+  });
+}
+
+// getUserMedia 的报错类型对用户没意义，换成看得懂的话
+function describeCameraError(error) {
+  const name = error && error.name;
+  if (name === 'NotAllowedError') return '摄像头权限被拒绝，请在浏览器地址栏里允许访问';
+  if (name === 'NotFoundError') return '没有检测到摄像头设备';
+  if (name === 'NotReadableError') return '摄像头被其它程序占用';
+  return (error && error.message) ? error.message : '未知错误';
+}
+
+// 拍照：主预览用完整分辨率的 PNG，另外出一张 160×90 的小图给列表用。
+// 两张图都从同一帧视频直接缩放绘制，不把几百 KB 的大图存进数组
+async function captureSnapshot() {
+  const stream = await withTimeout(
+    navigator.mediaDevices.getUserMedia({ video: true }),
+    10000,
+    '打开摄像头超时'
+  );
+
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
     cameraPreview.srcObject = stream;
     cameraPreview.style.display = 'block';
 
-    // 等视频加载后再截图
-    cameraPreview.onloadedmetadata = () => {
-      cameraCanvas.width = cameraPreview.videoWidth;
-      cameraCanvas.height = cameraPreview.videoHeight;
-      cameraCanvas.getContext('2d').drawImage(cameraPreview, 0, 0);
-      const dataUrl = cameraCanvas.toDataURL('image/png');
-      snapshotImg.src = dataUrl;
-      snapshotImg.style.display = 'block';
+    // 等视频有画面再截图。先看 readyState：设备预热或二次调用时元数据可能已经就绪，
+    // 这时再挂 onloadedmetadata 会永远等不到（用字面量 1，等价于 HAVE_METADATA）
+    if (cameraPreview.readyState < 1) {
+      await withTimeout(
+        new Promise((resolve) => { cameraPreview.onloadedmetadata = () => resolve(); }),
+        10000,
+        '摄像头画面加载超时'
+      );
+    }
+    if (!cameraPreview.videoWidth) {
+      throw new Error('摄像头没有返回画面尺寸');
+    }
 
-      // 拍照后关闭摄像头
-      stream.getTracks().forEach(track => track.stop());
-      cameraPreview.style.display = 'none';
-    };
-  } catch (error) {
-    alert('无法访问摄像头：' + error.message);
+    cameraCanvas.width = cameraPreview.videoWidth;
+    cameraCanvas.height = cameraPreview.videoHeight;
+    cameraCanvas.getContext('2d').drawImage(cameraPreview, 0, 0);
+    const dataUrl = cameraCanvas.toDataURL('image/png');
+    snapshotImg.src = dataUrl;
+    snapshotImg.style.display = 'block';
+
+    const thumbCanvas = document.createElement('canvas');
+    thumbCanvas.width = 160;
+    thumbCanvas.height = 90;
+    thumbCanvas.getContext('2d').drawImage(cameraPreview, 0, 0, 160, 90);
+    const thumbUrl = thumbCanvas.toDataURL('image/jpeg', 0.7);
+
+    return { dataUrl: dataUrl, thumbUrl: thumbUrl };
+  } finally {
+    // 成功、超时、drawImage 抛错三条路径都要把摄像头释放掉，否则指示灯一直亮着
+    cameraPreview.onloadedmetadata = null;
+    stream.getTracks().forEach(track => track.stop());
+    cameraPreview.style.display = 'none';
   }
+}
+
+// 拍照 + 记录：语音说「记录现场」和点拍照按钮都走这里
+async function handleSpotRecord() {
+  if (capturing) {
+    return { ok: false, message: '正在拍照，请稍候' };
+  }
+  capturing = true;
+  try {
+    const shot = await captureSnapshot();
+    addSpotRecord(selectedNodeId, currentStatus, formatTime(new Date()), shot.thumbUrl);
+    return { ok: true, message: `已记录现场：${spokenNode(selectedNodeId)}` };
+  } catch (error) {
+    console.error('拍照失败：', error);
+    return { ok: false, message: `拍照失败：${describeCameraError(error)}` };
+  } finally {
+    capturing = false;
+  }
+}
+
+cameraBtn.addEventListener('click', async () => {
+  const result = await handleSpotRecord();
+  // 按钮路径保持安静，失败才弹提示；语音路径不出弹窗，改由语音播报
+  if (!result.ok) alert(result.message);
 });
+
+// ==================== 现场记录 ====================
+function addSpotRecord(nodeId, status, time, thumbUrl) {
+  spotRecords.unshift({ nodeId: nodeId, status: status, time: time, thumbUrl: thumbUrl });
+  renderSpotLog();
+}
+
+function renderSpotLog() {
+  const list = document.getElementById('spotLogList');
+  if (!list) return;
+  list.innerHTML = '';
+
+  if (spotRecords.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'spot-log-empty';
+    empty.textContent = '暂无现场记录。说「记录现场」或点上面的按钮，即可拍下现场并记下时间、宿舍与状态。';
+    list.appendChild(empty);
+    return;
+  }
+
+  spotRecords.forEach((record) => {
+    const li = document.createElement('li');
+
+    const img = document.createElement('img');
+    img.src = record.thumbUrl;
+    img.alt = `${record.nodeId} 现场快照`;
+
+    const meta = document.createElement('div');
+    meta.className = 'spot-meta';
+
+    // 节点做成醒目标签：列表是三个宿舍混排的，一眼要能看出这张照片属于哪间
+    const nodeTag = document.createElement('span');
+    nodeTag.className = 'spot-node';
+    nodeTag.textContent = record.nodeId;
+
+    // 状态为空说明当时还没分析出结果，别渲染成两个连续的分隔点
+    const rest = document.createElement('span');
+    rest.textContent = ` · ${record.status || '状态未知'} · ${record.time}`;
+
+    meta.appendChild(nodeTag);
+    meta.appendChild(rest);
+
+    li.appendChild(img);
+    li.appendChild(meta);
+    list.appendChild(li);
+  });
+}
+
+// ==================== 语音指令 ====================
+// 归一化：NFKC 一行解决全角字母、全角连字符、全角空格与标点。
+// 注意 \p{P} 会把 '-' 也吃掉，所以下面正则里的 -? 是必需的，不是可选美化
+function normalizeCommand(text) {
+  return String(text).normalize('NFKC').toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '');
+}
+
+// 从文本里认出宿舍节点。分三档，越往后越宽松 ——
+// 因为 Chrome 的中文识别对 "dorm b" 这种中英混说的转写很不稳定
+// （实测会变成「多姆B」「dormbee」「door b」等），只认准 dorm 这五个字母会大面积漏掉
+function matchNodeId(cmd) {
+  // 1. 标准写法：查看dorm-b / 查看 dorm b / 查看dormb
+  //    (?![a-z0-9]) 防止把 dorm-book 误判成 dorm-b
+  let matched = cmd.match(/dorm-?([abc])(?![a-z0-9])/);
+
+  // 2. 中文写法：查看宿舍B（中文识别远比混英文稳，是可靠的备选说法）
+  if (!matched) matched = cmd.match(/宿舍-?([abc])(?![a-z0-9])/);
+
+  // 3. 兜底：dorm 被转写歪了，就退化成「查看/切换/打开… + 附近一个独立的 a/b/c 字母」
+  //    要求必须有查看类动词，避免普通闲聊里蹦出一个字母就误触发
+  if (!matched) {
+    matched = cmd.match(/(?:查看|看看|看下|看一下|切换|切到|切回|转到|打开|显示|展示)[^abc]{0,8}?([abc])/);
+  }
+
+  return matched ? `dorm-${matched[1]}` : null;
+}
+
+// 纯解析：不碰 DOM、不产生任何副作用，方便脱离浏览器单独测试
+function parseVoiceCommand(text) {
+  const cmd = normalizeCommand(text);
+  if (!cmd) return { type: 'none' };
+
+  // 否定句不执行：「不要记录现场」「别切换到 dorm-b」
+  if (/不(要|用|需要)|别|无需|取消|停止/.test(cmd)) return { type: 'none' };
+
+  // 允许中间夹字：「记录一下现场」「现场情况记录」
+  if (/记录.{0,3}现场|现场.{0,3}记录/.test(cmd)) return { type: 'spot' };
+
+  const nodeId = matchNodeId(cmd);
+  if (nodeId) return { type: 'switch', nodeId: nodeId };
+
+  if (cmd.includes('朗读')) return { type: 'read' };
+
+  return { type: 'none' };
+}
+
+function spokenNode(nodeId) {
+  return SPOKEN_NODES[nodeId] || nodeId;
+}
+
+// 执行指令，返回「要念出来的话」（null = 不出声）
+async function handleVoiceCommand(text) {
+  // 排查用：控制台里能看到 ASR 到底转写成了什么、归一化之后又是什么
+  console.log('语音指令 - 原文：', text, '｜归一化：', normalizeCommand(text));
+  const command = parseVoiceCommand(text);
+
+  if (command.type === 'spot') {
+    // 拍照是异步的：必须等它真有结果再念确认，
+    // 否则会出现"语音已经说已记录，摄像头还在等授权"
+    const result = await handleSpotRecord();
+    return result.message;
+  }
+
+  if (command.type === 'switch') {
+    return selectNode(command.nodeId)
+      ? `已切换到${spokenNode(command.nodeId)}`
+      : `${spokenNode(command.nodeId)} 不是有效宿舍`;
+  }
+
+  if (command.type === 'read') {
+    // 与 TTS 按钮走同一个出处，念的都是「节点 + 温湿度 + 状态」
+    return buildStatusSpeech();
+  }
+
+  return null;
+}
 
 // ASR 语音识别
 asrBtn.addEventListener('click', () => {
@@ -206,13 +414,24 @@ asrBtn.addEventListener('click', () => {
   recognition.lang = 'zh-CN';
   recognition.interimResults = false;
 
-  recognition.onresult = (event) => {
+  recognition.onresult = async (event) => {
     const text = event.results[0][0].transcript;
+    // 显示原始识别文本，不要显示归一化之后的
     asrResult.textContent = '识别结果：' + text;
 
-    // 固定指令：朗读状态
-    if (text.includes('朗读状态') || text.includes('朗读')) {
-      speakCurrentStatus();
+    try {
+      const say = await handleVoiceCommand(text);
+      if (say) {
+        asrResult.textContent = `识别结果：${text}（${say}）`;
+        speakText(say);
+      } else {
+        // 没听出指令时把原始转写留在页面上，方便换一种说法再试
+        asrResult.textContent = `识别结果：${text}（没听出指令，可以说「查看宿舍B」「记录现场」「朗读状态」）`;
+      }
+    } catch (error) {
+      // 不接住的话会变成 ASR 回调里的 unhandled rejection，很难排查
+      console.error('语音指令执行失败：', error);
+      asrResult.textContent = `识别结果：${text}（指令执行失败）`;
     }
   };
 
@@ -223,12 +442,31 @@ asrBtn.addEventListener('click', () => {
   recognition.start();
 });
 
-// TTS 朗读当前状态
-function speakCurrentStatus() {
-  const status = statusText.textContent || '当前没有状态';
-  const utterance = new SpeechSynthesisUtterance(status);
+// TTS：先打断上一句再念，免得连续下指令时语音排队积压、越念越滞后
+function speakText(text) {
+  if (!text) return;
+  speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = 'zh-CN';
   speechSynthesis.speak(utterance);
+}
+
+// 朗读内容：当前节点 + 温度 + 湿度 + 状态。
+// 中文 TTS 会把 "dorm-b" 逐个字母念出来，所以节点名用「宿舍B」（与切换/记录的确认语保持一致）
+function buildStatusSpeech() {
+  const nodeText = spokenNode(selectedNodeId);
+  const temperature = temperatureInput.value.trim();
+  const humidity = humidityInput.value.trim();
+  // 该节点还没有数据时，别念出一串空值
+  if (!temperature || !humidity) {
+    return `当前节点${nodeText}，还没有收到数据`;
+  }
+  return `当前节点${nodeText}，温度 ${temperature} 度，湿度 ${humidity}%，状态 ${currentStatus || '尚未分析'}`;
+}
+
+// TTS 朗读当前状态
+function speakCurrentStatus() {
+  speakText(buildStatusSpeech());
 }
 
 ttsBtn.addEventListener('click', speakCurrentStatus);
@@ -315,11 +553,21 @@ function renderSelectedNode() {
   renderHistory();
 }
 
-// 顶部下拉框切换宿舍：只换页面显示，各宿舍自己的数据互不影响
-function onNodeChange() {
-  selectedNodeId = nodeSelect.value;
+// 切换当前显示的宿舍：下拉框与语音指令共用这一个入口。
+// 各宿舍自己的数据互不影响，只换页面显示
+function selectNode(nodeId) {
+  if (!MQTT_NODES.includes(nodeId)) return false;
+  selectedNodeId = nodeId;
+  // 下拉框要跟着变，否则页面显示的和控件选中的对不上
+  if (nodeSelect) nodeSelect.value = nodeId;
   console.log('切换到宿舍：', selectedNodeId);
   renderSelectedNode();
+  return true;
+}
+
+// 顶部下拉框切换宿舍
+function onNodeChange() {
+  selectNode(nodeSelect.value);
 }
 
 // 收到 MQTT 数据后，复用现有的校验、规则和渲染逻辑更新页面
@@ -409,4 +657,5 @@ if (nodeSelect) {
 }
 
 renderSelectedNode();
+renderSpotLog();
 initMqtt();

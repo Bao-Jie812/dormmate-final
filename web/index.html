@@ -52,12 +52,17 @@
 
     <section class="camera-area" style="margin-top: 24px;">
     <h2>现场快照</h2>
-    <button id="cameraBtn">打开摄像头并拍照</button>
+    <button id="cameraBtn">拍照并记录现场</button>
     <div style="margin-top: 12px;">
         <video id="cameraPreview" autoplay playsinline style="max-width: 100%; display: none;"></video>
         <canvas id="cameraCanvas" style="display: none;"></canvas>
         <img id="snapshotImg" alt="现场快照" style="max-width: 100%; display: none;" />
     </div>
+    </section>
+
+    <section class="spot-area" style="margin-top: 24px;">
+    <h2>现场记录</h2>
+    <ul id="spotLogList" class="spot-log"></ul>
     </section>
 
     <section class="voice-area" style="margin-top: 24px;">

@@ -13,9 +13,9 @@
 | **M3** 本机交互 | 调用摄像头拍摄现场快照，支持语音识别下发指令、语音朗读当前状态 | 与 M1 同一页面，点对应按钮 |
 | **M4** 移动端 | 微信小程序，复用与 Web 完全一致的业务规则，支持多宿舍切换 | 微信开发者工具打开 `miniapp` |
 | **M5** 实时 Dashboard | 经 MQTT 订阅各宿舍数据，实时刷新卡片、趋势图与异常统计 | 先起本机 Broker，再打开 `dashboard/index.html` |
-| **M6** 3D 数字空间 | Three.js 3D 宿舍，地板/窗户颜色与风扇转速随 MQTT 状态实时变化 | Live Server 打开 `3d/index.html` |
+| **M6** 3D 数字空间 | Three.js 并排三间宿舍，颜色与转速随各自 MQTT 状态变化，可点击切换节点，优先关注宿舍橙色高亮 | Live Server 打开 `3d/index.html` |
 
-**实时链路**：各端统一连接本机 Broker（WebSocket `8083`），发布到 `dormmate/<节点>/env`，Web、小程序、Dashboard、3D 场景同步刷新；处理动作走 `dormmate/<节点>/action`。
+**实时链路**：各端统一连接本机 Broker（WebSocket `8083`），发布到 `dormmate/<节点>/env`，Web、小程序、Dashboard、3D 场景同步刷新；处理动作走 `dormmate/<节点>/action`；Dashboard 算出的优先关注结果走 `dormmate/priority` 广播给 3D 场景做高亮。
 
 ## 高阶模块（A / B / C）
 
