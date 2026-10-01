@@ -224,14 +224,89 @@
     let client = null;
 
     // ================== 2. 更新节点状态（A1 核心）==================
+    // 全页面唯一的"异常"定义：只有 正常 / 等待数据 不算异常。
+    // updateNodeState 和 updatePriority 必须共用它，否则会出现
+    // 「总览说有节点需要关注，却算不出是哪一个」的 null 情况
+    function isAbnormalStatus(status) {
+      return status !== '正常' && status !== '等待数据';
+    }
+
+    // 解析上报里的 time 字段。这个函数必须"永不失败"：
+    // 原来是 new Date(timeStr.replace(' ', 'T'))，一旦 time 是空串、缺字段
+    // 或写成别的形式（如 2026/10/01 13:00:00），就会得到 Invalid Date，
+    // 持续时间随即算成 NaN；而 NaN 与任何数比较都是 false，
+    // 这个异常节点就永远选不上优先关注，总览显示成"null 当前最值得优先处理"。
+    // 解析不出来时退回当前时间（等价于"刚刚发生异常"）
+    //
+    // 另一个坑：MQTTX 手发报文时经常只填 "16:20" 或直接给 Unix 时间戳，
+    // 这两种以前都会掉进"退回当前时间"分支，异常持续时间永远算成 0 分钟
+    // ——表现就是"不管报文里的 time 写多早，都显示不到 1 分钟"。
+    // 所以下面按格式显式解析，而不是把字符串丢给 new Date() 碰运气。
+    function parseReadingTime(timeStr) {
+      const now = new Date();
+
+      // Unix 时间戳：10 位是秒、13 位是毫秒，用 1e11 分界。
+      // 结果落在 2000~2100 年之外就认为不是时间戳（比如 "20261001" 这种 8 位日期串），
+      // 返回 null 让调用方继续往下试别的格式，而不是硬算出一个 1970 年的时刻
+      const fromEpoch = n => {
+        if (!Number.isFinite(n)) return null;
+        const d = new Date(n < 1e11 ? n * 1000 : n);
+        if (isNaN(d.getTime())) return null;
+        const y = d.getFullYear();
+        return (y >= 2000 && y <= 2100) ? d : null;
+      };
+
+      if (timeStr instanceof Date) return isNaN(timeStr.getTime()) ? now : timeStr;
+      if (typeof timeStr === 'number') return fromEpoch(timeStr) || now;
+      if (typeof timeStr !== 'string') return now;
+
+      const raw = timeStr.trim();
+      if (!raw) return now;
+
+      // 纯数字串同样按时间戳处理
+      if (/^\d+$/.test(raw)) {
+        const d = fromEpoch(Number(raw));
+        if (d) return d;
+      }
+
+      // 只有时间："16:20" / "16:20:30" —— 补上今天的日期
+      const timeOnly = raw.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+      if (timeOnly) {
+        const d = new Date(now);
+        d.setHours(+timeOnly[1], +timeOnly[2], +(timeOnly[3] || 0), 0);
+        return d;
+      }
+
+      // 日期 [+ 时间]："2026-10-01 16:20:00" / "2026/10/1 16:20" / "2026-10-01T16:20:00"
+      const m = raw.match(
+        /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[T\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/
+      );
+      if (m) {
+        // 带时区后缀（Z / ±hh:mm）的是绝对时刻，交给原生解析，
+        // 否则会把 UTC 当成本地时间、整体偏移几个时区
+        if (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(raw)) {
+          const native = new Date(raw.replace(/^(.{10})\s/, '$1T'));
+          if (!isNaN(native.getTime())) return native;
+        }
+        // 显式构造本地时间：new Date('2026-10-1T16:20') 在部分浏览器里是 Invalid Date
+        const d = new Date(
+          +m[1], +m[2] - 1, +m[3],
+          +(m[4] || 0), +(m[5] || 0), +(m[6] || 0), 0
+        );
+        return isNaN(d.getTime()) ? now : d;
+      }
+
+      const fallback = new Date(raw.replace(/\//g, '-').replace(' ', 'T'));
+      return isNaN(fallback.getTime()) ? now : fallback;
+    }
+
     function updateNodeState(nodeId, status, timeStr) {
       const node = nodeState[nodeId];
       if (!node) return;
-      const isAbnormal = status !== '正常';
-      const currentTime = new Date(timeStr.replace(' ', 'T'));
+      const currentTime = parseReadingTime(timeStr);
 
-      if (isAbnormal) {
-        if (node.status === '正常' || node.status === '等待数据') {
+      if (isAbnormalStatus(status)) {
+        if (!isAbnormalStatus(node.status)) {
           node.abnormalSince = currentTime;
           node.abnormalCount = 0;
         }
@@ -270,28 +345,36 @@
         return;
       }
 
-      const actionAt = new Date();
-      const now = actionAt.toLocaleTimeString('zh-CN', { hour12: false });
+      // 动作时间：指令报文自带 time 时以它为准（方便用 MQTTX 补发历史报文模拟整条时间线），
+      // 本地点按钮 / 没带 time 时退回当前时间
+      const actionAt = parseReadingTime(opts.time);
+      const actionTimeText = actionAt.toLocaleTimeString('zh-CN', { hour12: false });
       processingState[nodeId] = {
-        time: now,
+        time: actionTimeText,
         action: actionName,
-        dataAfterAction: 0,
+        normalStreak: 0,
         restored: false
       };
 
       // A4: 记录完整事件信息（恢复时间与最终结果在收到恢复数据后回填）
       const node = nodeState[nodeId];
       const reading = latestReading[nodeId] || {};
+      // 「开始时间」取的是引发异常的第一条数据自带的 time（就存在 abnormalSince 里），
+      // 不是点处理的时刻 —— 之前写成 new Date()，MQTT 报文里的 time 就白填了。
+      // abnormalSince 缺失（异常起点已复位）才退回动作时间
+      const since = (node.abnormalSince instanceof Date && !isNaN(node.abnormalSince.getTime()))
+        ? node.abnormalSince
+        : actionAt;
       eventLogs.push({
         nodeId: nodeId,
-        startTime: formatDateTime(actionAt),
+        startTime: formatDateTime(since),
         status: node.status,
         temperature: reading.temperature,
         humidity: reading.humidity,
         abnormalCount: node.abnormalCount,
         priorityReason: buildPriorityReason(nodeId),
         action: actionName,
-        actionTime: now,
+        actionTime: actionTimeText,
         restoreTime: null,
         result: '处理中'
       });
@@ -313,42 +396,80 @@
       applyAction(nodeId, { publish: true });
     }
 
+    // A3: 动作后连续收到几条正常数据才判「已恢复」。
+    // 判据是"连续"而不是"累计"：中途再来一条异常数据，计数清零重新数，
+    // 否则"偏热→正常→正常"这种没真正稳定的过程会被误判成恢复
+    const NORMAL_STREAK_TO_RESTORE = 2;
+
+    // 判定恢复：恢复时间用触发判定的那条数据自带的 time（MQTTX 模拟的历史数据也能对上时间线），
+    // 解析不出来才退回当前时间
+    function markRestored(nodeId, timeStr) {
+      const state = processingState[nodeId];
+      if (!state || state.restored) return;
+
+      const restoreAt = parseReadingTime(timeStr);
+      state.restored = true;
+      state.restoreTime = restoreAt.toLocaleTimeString('zh-CN', { hour12: false });
+
+      // A4: 回填该节点最近一条未结束的事件记录
+      for (let i = eventLogs.length - 1; i >= 0; i--) {
+        const log = eventLogs[i];
+        if (log.nodeId !== nodeId || log.result !== '处理中') continue;
+        log.restoreTime = formatDateTime(restoreAt);
+        log.result = '已恢复';
+        break;
+      }
+    }
+
     // ================== 4. A1/B1/B2/A4: 计算优先关注、总览和复盘 ==================
-    function updatePriority() {
-      let priorityNodeId = null;
-      let maxDurationSec = -0.1;
-      let maxCount = -1;
+    // options.publish === false：只重算并重渲染，不往 MQTT 发 priority。
+    // 供下面的定时器调用 —— 界面要跟着墙上时钟走，但 MQTT 那侧有自己的
+    // 12 秒心跳，两条流各自独立，别让定时器把发布频率顶上去
+    function updatePriority(options) {
+      const opts = options || {};
       const now = new Date();
 
-      // 遍历节点，比较异常持续时间和次数
+      // 该节点异常持续了多久（秒）。时间戳缺失或非法时按 0 处理，
+      // 绝不让 NaN 参与比较：NaN 和任何数比都是 false，
+      // 会让这个节点永远选不上优先关注
+      function durationSecOf(node) {
+        const since = node.abnormalSince instanceof Date ? node.abnormalSince.getTime() : NaN;
+        if (!Number.isFinite(since)) return 0;
+        return Math.max(0, (now.getTime() - since) / 1000);
+      }
+
+      // 一趟遍历同时完成"选优先关注节点"和"生成总览统计"：
+      // 两者共用 isAbnormalStatus，判定条件不会再打架
+      let priorityNodeId = null;
+      let maxDurationSec = 0;
+      let maxCount = 0;
+      let normalCount = 0;
+      const abnormalNodes = [];
+
       for (const [nodeId, node] of Object.entries(nodeState)) {
-        if (node.status !== '正常' && node.status !== '等待数据' && node.abnormalSince) {
-          const durationSec = Math.max(0, (now - node.abnormalSince) / 1000);
-          if (durationSec > maxDurationSec) {
-            maxDurationSec = durationSec;
-            maxCount = node.abnormalCount;
-            priorityNodeId = nodeId;
-          } else if (Math.abs(durationSec - maxDurationSec) < 1) {
-            if (node.abnormalCount > maxCount) {
-              maxCount = node.abnormalCount;
-              priorityNodeId = nodeId;
-            }
-          }
+        if (node.status === '正常') normalCount++;
+        if (!isAbnormalStatus(node.status)) continue;
+
+        abnormalNodes.push(nodeId);
+        const durationSec = durationSecOf(node);
+        // 异常持续时间更长者优先；差距在 1 秒内算接近，再比累计异常次数。
+        // priorityNodeId === null 这个分支保证：只要有节点异常，就一定能选出
+        // 一个具体节点，不会出现"有节点需要关注但优先关注对象是 null"
+        if (priorityNodeId === null ||
+            durationSec > maxDurationSec + 1 ||
+            (Math.abs(durationSec - maxDurationSec) <= 1 && node.abnormalCount > maxCount)) {
+          priorityNodeId = nodeId;
+          maxDurationSec = durationSec;
+          maxCount = node.abnormalCount;
         }
       }
 
       // B1: 生成当前总览
-      let normalCount = 0;
-      let abnormalNodes = [];
-      for (const [nodeId, node] of Object.entries(nodeState)) {
-        if (node.status === '正常') normalCount++;
-        if (node.status !== '正常' && node.status !== '等待数据') abnormalNodes.push(nodeId);
-      }
       const overviewEl = document.getElementById('overviewBanner');
-      if (abnormalNodes.length > 0) {
+      if (priorityNodeId) {
         overviewEl.textContent = `当前 3 个宿舍中，${normalCount} 个正常，${abnormalNodes.length} 个需要关注；${priorityNodeId} 当前最值得优先处理。`;
       } else {
-        overviewEl.textContent = '当前 3 个宿舍状态全部正常。';
+        overviewEl.textContent = '当前所有宿舍状态正常。';
       }
 
       // 更新横幅（含对比说明）
@@ -375,8 +496,16 @@ if (priorityNodeId) {
     }
   }
 
+  // 把异常起点也写出来：这是报文 time 字段解析出来的时刻，
+  // 不是"收到报文的那一刻"。两者对不上时一眼就能看出来是解析走了兜底分支
+  const sinceDate = nodeState[priorityNodeId].abnormalSince;
+  const sinceText = (sinceDate instanceof Date && !isNaN(sinceDate.getTime()))
+    ? `（自 ${String(sinceDate.getHours()).padStart(2, '0')}:` +
+      `${String(sinceDate.getMinutes()).padStart(2, '0')} 起）`
+    : '';
+
   banner.innerHTML =
-    `⚠️ 优先关注 <strong>${priorityNodeId}</strong>：已持续异常 ${displayMinutes} 分钟，累计 ${maxCount} 次；` +
+    `⚠️ 优先关注 <strong>${priorityNodeId}</strong>：已持续异常 ${displayMinutes} 分钟${sinceText}，累计 ${maxCount} 次；` +
     compareTexts.join('；') + '。';
   banner.style.display = 'block';
 } else {
@@ -447,7 +576,9 @@ if (priorityNodeId) {
 
       // M6: 把优先关注结果同步给 3D 场景。这里只做发布，上面的判定逻辑一行不动；
       // nodeId 为 null 表示当前没有需要优先关注的宿舍
-      publishPriority(priorityNodeId, maxDurationSec, maxCount);
+      if (opts.publish !== false) {
+        publishPriority(priorityNodeId, maxDurationSec, maxCount);
+      }
     }
 
     // ================== 5. M5: 更新图表 ==================
@@ -468,17 +599,24 @@ if (priorityNodeId) {
       });
     }
 
-    function updateUI(data) {
+    // holdStatus = true：这条数据还不足以判定恢复（A3 验证中），
+    // 温湿度照常刷新，但状态文字先保持处理前的那个，别让"1 条正常"看起来像已经好了
+    function updateUI(data, holdStatus) {
       const nodeId = data.nodeId;
       const card = document.getElementById(`card-${nodeId}`);
       if (card) {
         card.querySelector('.value').textContent = `当前：${data.temperature}℃ / ${data.humidity}%`;
         const statusEl = card.querySelector('.status');
-        statusEl.textContent = data.status;
-        statusEl.className = `status ${data.status}`;
+        const displayStatus = (holdStatus && nodeState[nodeId]) ? nodeState[nodeId].status : data.status;
+        statusEl.textContent = displayStatus;
+        statusEl.className = `status ${displayStatus}`;
       }
 
-      const timeLabel = data.time.substring(11, 16);
+      // 时间标签走 parseReadingTime：原来直接 data.time.substring(11, 16)，
+      // time 缺失时会抛错，被消息回调的 catch 吞掉，后面的 updatePriority()
+      // 就再也不会执行，界面停在上一轮结果上
+      const readingTime = parseReadingTime(data.time);
+      const timeLabel = `${String(readingTime.getHours()).padStart(2, '0')}:${String(readingTime.getMinutes()).padStart(2, '0')}`;
       if (chart.data.labels.length > 15) {
         chart.data.labels.shift();
         chart.data.datasets.forEach(d => d.data.shift());
@@ -510,7 +648,10 @@ if (priorityNodeId) {
         else publishPriority(null, 0, 0);
       });
 
-      client.on('message', (topic, message) => {
+      // packet.retain 为 true 说明这条是订阅 / 重连时 Broker 重放的历史报文，
+      // 不是新数据：它照常刷新界面，但不能参与"连续两条正常"的计数，
+      // 否则断线重连会把同一条正常数据数两次、把恢复判早了
+      client.on('message', (topic, message, packet) => {
         try {
           const data = JSON.parse(message.toString());
 
@@ -521,41 +662,41 @@ if (priorityNodeId) {
           //  此时 applyAction 会因"正在处理中"直接返回，不会重复记录）
           if (topic.endsWith('/action')) {
             if (data.action === 'turn_on_fan' && data.nodeId) {
-              applyAction(data.nodeId, { publish: false, actionName: data.actionName });
+              // 指令报文若自带 time，就用它当动作时间，让复盘时间线跟着模拟数据走
+              applyAction(data.nodeId, { publish: false, actionName: data.actionName, time: data.time });
             }
             return;
           }
 
           const nodeId = data.nodeId;
 
-          // 1. 更新节点状态（并记录最近一次上报值，供 A4 复盘引用）
+          // 1. 记录最近一次上报值，供 A4 复盘引用
           latestReading[nodeId] = { temperature: data.temperature, humidity: data.humidity };
-          updateNodeState(nodeId, data.status, data.time);
-          
-          // 2. 更新卡片与图表
-          updateUI(data);
-          
-          // 3. A3: 验证恢复逻辑
-          if (processingState[nodeId]) {
-            processingState[nodeId].dataAfterAction += 1;
-            if (processingState[nodeId].dataAfterAction >= 2 && data.status === '正常') {
-              const restoreAt = new Date();
-              const restoreTime = restoreAt.toLocaleTimeString('zh-CN', { hour12: false });
-              processingState[nodeId].restored = true;
-              processingState[nodeId].restoreTime = restoreTime;
-              
-              // A4: 回填该节点最近一条未结束的事件记录
-              for (let i = eventLogs.length - 1; i >= 0; i--) {
-                const log = eventLogs[i];
-                if (log.nodeId !== nodeId || log.result !== '处理中') continue;
-                log.restoreTime = formatDateTime(restoreAt);
-                log.result = '已恢复';
-                break;
-              }
+
+          // 2. A3: 验证恢复 —— 动作后必须"连续 2 条正常数据"才判恢复。
+          //    第 1 条正常数据先按住：卡片保持原状态、继续显示"处理中"，
+          //    等第 2 条连续正常数据到达，才落回正常并回填恢复时间（避免假性恢复）
+          const processing = processingState[nodeId];
+          let holdStatus = false;
+          if (processing && !processing.restored) {
+            if (packet && packet.retain) {
+              holdStatus = true;                        // 重放的历史报文：只是"看到"，不算一次新验证
+            } else if (data.status === '正常') {
+              processing.normalStreak += 1;
+              if (processing.normalStreak >= NORMAL_STREAK_TO_RESTORE) markRestored(nodeId, data.time);
+              else holdStatus = true;
+            } else {
+              processing.normalStreak = 0;              // 中途又出现异常：连续计数清零，重新数
             }
           }
-          
-          // 4. 重新计算优先关注（并刷新所有 UI，包括 A4 事件列表）
+
+          // 3. 更新节点状态（holdStatus 时先不动：保持处理前的状态）
+          if (!holdStatus) updateNodeState(nodeId, data.status, data.time);
+
+          // 4. 更新卡片与图表
+          updateUI(data, holdStatus);
+
+          // 5. 重新计算优先关注（并刷新所有 UI，包括 A4 事件列表）
           updatePriority();
 
         } catch (e) {
@@ -636,6 +777,13 @@ if (priorityNodeId) {
     }
 
     setInterval(refreshPriorityHeartbeat, PRIORITY_HEARTBEAT_MS);
+
+    // 上面这个心跳只动 MQTT 报文，不碰 DOM。界面本身原先只在收到消息时重算一次，
+    // 于是 16:20 收到报文时算出"不到 1 分钟"，到 16:50 还显示"不到 1 分钟"
+    // —— 看起来就像用了发送时刻而不是报文里的 time。
+    // 这里按墙上时钟定期重算（只重渲染，publish: false 避免把发布频率顶上去）
+    const UI_REFRESH_MS = 10000;
+    setInterval(() => updatePriority({ publish: false }), UI_REFRESH_MS);
 
     // 关页面时尽力清一次，让 3D 侧立刻收敛；真正兜底的是那边的 40 秒超时
     window.addEventListener('pagehide', () => {

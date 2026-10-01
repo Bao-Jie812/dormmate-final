@@ -29,6 +29,10 @@
 - **M6 Bug**：3D 页订阅漏写 `/env`（写成 `dormmate/dorm-a`），场景一直停在“等待数据”；对照 MQTTX 的 Topic 改正后恢复实时响应。
 - **M5 Bug**：Topic 误写成 `dormmate/dorm-c/wrong`，Dashboard 不再更新；改回 `dormmate/dorm-c/env` 后恢复刷新。
 
+## 技术文档
+- [DormMate 技术文档 PDF](docs/DormMate_技术文档.pdf)
+- [技术文档 Markdown 源文件](docs/tech_doc.md)
+
 ## AI 协作开发复盘
 
 本项目用 Claude Code 辅助开发，主要用在三处：

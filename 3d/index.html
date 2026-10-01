@@ -309,7 +309,7 @@
         selectRing: selectRing, priorityRing: priorityRing, priorityMat: priorityMat,
         label: label, badge: badge,
         // 处理动作相关：由 3D 依据 action 消息 + 后续 env 数据自行推断
-        processing: false, actionName: '', msgsAfterAction: 0, lastCountedTime: '', recoveredUntil: 0,
+        processing: false, actionName: '', normalStreak: 0, recoveredUntil: 0,
       };
       zones[nodeId] = zone;
       drawZoneLabel(zone);
@@ -325,6 +325,8 @@
     // 四个状态的场景表现。数值与改造前完全一致，只是改成查表以便按宿舍应用
     const ACTION_SPEED = 0.4;    // 收到「开启风扇」指令时的转速，与偏热的转速一致
     const RECOVERED_HOLD_MS = 5000;   // 「已恢复」牌子保留多久
+    // 与 Dashboard 同一条规则：动作后必须"连续 2 条正常数据"才判恢复
+    const NORMAL_STREAK_TO_RESTORE = 2;
     const STATUS_STYLE = {
       '正常': { speed: 0.02, floor: 0xcbd5e1, glass: 0x38bdf8 },
       '偏热': { speed: 0.4, floor: 0xfca5a5, glass: 0xef4444 },
@@ -642,7 +644,7 @@
 
     // 消息处理抽成独立函数：实时 MQTT 与「事件回放」共用同一条链路。
     // 回放因此不是"另写一套渲染"，而是在复演真实报文走过的逻辑
-    function applyMqttMessage(topic, message) {
+    function applyMqttMessage(topic, message, packet) {
       try {
         const data = JSON.parse(message.toString());
         // 优先关注走独立主题，必须按 topic 早退：
@@ -656,24 +658,33 @@
           const zone = zones[data.nodeId];
           // 处理中：必须"先判恢复、再应用状态"。顺序反了的话，
           // 恢复这条数据的转速要等下一条 env 才生效，看起来就是"已经恢复了风扇还在高速转"
+          // A3 验证：动作后必须"连续 2 条正常"才判恢复；第 1 条正常数据先按住，
+          // 房间保持处理前的状态（与 Dashboard 的「第 1 条仍处理中」逐字对齐）
+          let holdStatus = false;
           if (zone && zone.processing) {
-            // 重连后 broker 会重放 retained 的 env，按 time 去重，别白送计数
-            if (!data.time || data.time !== zone.lastCountedTime) {
-              zone.lastCountedTime = data.time || '';
-              zone.msgsAfterAction += 1;
-              // 与 Dashboard 的判定逐字对齐：动作后累计 ≥2 条、且当前这条是正常
-              //（注意它并不要求连续两条都正常）
-              if (zone.msgsAfterAction >= 2 && data.status === '正常') {
+            // packet.retain 为 true 是订阅 / 重连时 Broker 重放的历史报文：
+            // 照常刷新画面，但不参与"连续正常"计数，避免同一条数据被数两次
+            if (packet && packet.retain) {
+              holdStatus = true;
+            } else if (data.status === '正常') {
+              zone.normalStreak += 1;
+              if (zone.normalStreak >= NORMAL_STREAK_TO_RESTORE) {
                 zone.processing = false;
                 zone.recoveredUntil = Date.now() + RECOVERED_HOLD_MS;
                 drawBadge(zone);
+              } else {
+                holdStatus = true;
               }
+            } else {
+              zone.normalStreak = 0;   // 中途又出现异常：连续计数清零，重新数
             }
           }
           latestData[data.nodeId] = data;
           // 三间各自上色：这里不能被"是否当前选中"挡住，否则另外两间永远是灰的
-          applyZoneStatus(data.nodeId, data.status);
-          if (data.nodeId === currentNodeId) updatePanel(data.status);
+          if (!holdStatus) applyZoneStatus(data.nodeId, data.status);
+          if (data.nodeId === currentNodeId) {
+            updatePanel(holdStatus && zone ? zone.status : data.status);
+          }
         }
 
         if (data.action === 'turn_on_fan') {
@@ -682,8 +693,7 @@
           // 动作作用在目标宿舍那一间，可能并不是当前选中的那间。
           // 同一节点再次收到动作时全部重来一遍，与 Dashboard「新对象覆盖旧对象」一致
           zone.processing = true;
-          zone.msgsAfterAction = 0;
-          zone.lastCountedTime = '';
+          zone.normalStreak = 0;
           zone.recoveredUntil = 0;
           zone.actionName = data.actionName || '开启风扇';
           zone.speed = ACTION_SPEED;
@@ -698,10 +708,11 @@
       }
     }
 
-    client.on('message', (topic, message) => {
+    client.on('message', (topic, message, packet) => {
       // 回放期间忽略实时消息：否则真实数据插进来会把回放剧情打乱
       if (replaying) return;
-      applyMqttMessage(topic, message);
+      // packet 里带着 retain 标志，用于识别 Broker 重放的历史报文（见 applyMqttMessage）
+      applyMqttMessage(topic, message, packet);
     });
 
     // ================= 10. 动画循环 =================
