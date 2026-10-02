@@ -60,7 +60,16 @@ mosquitto -c mosquitto.conf -v
 
 - **端口**：`8083`（WebSocket）
 - **成功标志**：窗口里出现 `Opening websockets listen socket on port 8083.`
-- **配置文件**：`mosquitto.conf` 只需三行 —— `allow_anonymous true` / `listener 8083` / `protocol websockets`
+- **配置文件**：`mosquitto.conf` 只需三条配置，**每条必须独立占一行**（配置之间留一个空行更保险）：
+
+```conf
+allow_anonymous true
+
+listener 8083
+protocol websockets
+```
+
+> ⚠️ 把两条配置写到同一行（例如 `protocol websockets allow_anonymous true`）会报 `Invalid 'protocol' value`，**Broker 启动后立刻退出**——复现时就踩过这个坑，见 [Evidence/Reproduce/01_复现者问题记录.md](Evidence/Reproduce/01_复现者问题记录.md)。
 
 > ⚠️ 这份配置**只开了 WebSocket 8083，没有开 1883 的 TCP 端口**。所以 MQTTX、浏览器、小程序全部必须用 `ws://127.0.0.1:8083` 连接，不要用 `mqtt://127.0.0.1:1883`，那个端口根本没在监听。
 
@@ -108,9 +117,13 @@ http://127.0.0.1:5500/3d/index.html
 
 | 项 | 填什么 |
 | --- | --- |
+| 名称 | 随意，例如 `dormmate-local` |
 | 协议 | 选 **`ws`**（不是 mqtt / tcp） |
-| 地址 | `127.0.0.1` |
-| 端口 | `8083` |
+| Host / 地址 | `127.0.0.1` |
+| Port / 端口 | `8083` |
+| Username | **留空** |
+| Password | **留空** |
+| SSL / TLS | **关闭**（本机 Broker 没配证书） |
 
 连接成功后，新建一条消息：
 
@@ -275,8 +288,9 @@ Web 主应用集成本机交互：调用摄像头拍摄现场快照、语音识�
 
 | 现象 | 原因与处理 |
 | --- | --- |
-| Broker 起不来 / 端口被占 | 在 cmd 里用 `netstat -ano` 配合 `findstr 8083` 查端口占用进程；确认 `mosquitto.conf` 里是 `listener 8083` + `protocol websockets` |
-| MQTTX 连不上 | 协议必须选 **ws / WebSocket**（不是 mqtt / tcp），地址 `127.0.0.1`、端口 `8083`；Mosquitto 窗口必须一直开着 |
+| Broker 启动后立刻退出，报 `Invalid 'protocol' value` | `mosquitto.conf` 里有两条配置写在了同一行。**每条配置必须独立成行**：`allow_anonymous true`、空行、`listener 8083`、`protocol websockets` |
+| Broker 起不来 / 端口被占 | 在 cmd 里用 `netstat -ano` 配合 `findstr 8083` 查占用进程；确认 `mosquitto.conf` 里是 `listener 8083` 与 `protocol websockets`，各占一行 |
+| MQTTX 反复报 `ECONNREFUSED` | 两种原因：① Broker 根本没起来（先看 Mosquitto 窗口是否已退出、有没有报错）；② Host / Port 填错。核对：协议 `ws`、Host `127.0.0.1`、Port `8083`、Username / Password 留空、SSL / TLS 关闭；确认窗口显示 `Opening websockets listen socket on port 8083.` 再连 |
 | 页面一直显示「等待数据」 | ① Broker 窗口是否还在运行；② MQTTX 是否已连上；③ **topic 拼写**是否为 `dormmate/<节点>/env`（漏了 `/env` 就是本项目踩过的坑）；④ F12 → Console 看有没有 `ws://127.0.0.1:8083` 的连接报错 |
 | 页面刚打开就显示着上次的数据 | 正常现象：Web 端发布时带了 `retain`，Broker 会把最后一条报文重放给新订阅者。想固定住测试数据，可在 MQTTX 里也勾选 Retain |
 | 小程序没反应 | 确认勾选了「不校验合法域名」；确认本机 Broker 在跑；用测试号打开 |
